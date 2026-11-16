@@ -1,0 +1,30 @@
+/* Minimal app-level styles */
+/* Design tokens are handled in index.css */
+
+/* Utility classes for common patterns */
+.skeleton {
+  @apply animate-pulse bg-muted rounded;
+}
+
+.skeleton-text {
+  @apply h-4 w-32 bg-muted rounded mb-2;
+}
+
+.skeleton-header {
+  @apply h-6 w-48 bg-muted rounded mb-4;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-muted;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-border hover:bg-border/80;
+  border-radius: var(--radius);
+}

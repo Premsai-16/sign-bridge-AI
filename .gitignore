@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+venv/
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+out/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+*.egg-info/
+pip-log.txt
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# Logs
+logs/
+*.log
+
+# Secrets & data
+secrets/
+data/user_samples/
+data/biometric/
+
+# Local repository backup and generated data
+.git.backup/
+*.db
+*.zip

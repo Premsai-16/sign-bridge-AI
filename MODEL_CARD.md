@@ -1,36 +1,53 @@
-# SignBridge Experimental ISL Recognition
+# Model Card: SignBridge Experimental ISL Classifier
 
-## Model details
+## 1. Model Details
 
-- **Shared model:** Owner-trained isolated-sign centroids, published as a versioned JSON file
-- **Personal model:** On-device nearest-example matching for private held signs
-- **Hand detector:** MediaPipe Hand Landmarker running in the browser
-- **Task:** Match a held hand pose to a trained English label
-- **Initial state:** No shared vocabulary is bundled; the owner must collect, validate, and publish samples
+- **Model Type**: Landmark Centroid Classifier (Euclidean distance with cosine similarity verification)
+- **Hand Feature Extractor**: MediaPipe Hand Landmarker compiled to WebAssembly (WASM), running on-device in the browser client
+- **Input Representation**: 21 3D hand coordinates (x, y, z) normalized relative to wrist origin and hand scale
+- **Target Language**: Indian Sign Language (ISL) isolated signs
+- **Vocabulary Source**: Owner-curated and published prototype vocabulary + optional private client-side family gestures
+- **Version Control**: Versioned published model artifacts (`published-model.json`) with automated backup of up to 20 past releases and instantaneous rollback capability
 
-## Intended use
+---
 
-The public camera page recognizes only labels in the currently published owner model or a visitor's private family vocabulary. Shared training samples are stored by the backend; private family samples remain in the browser. Recognized labels can be assembled into an editable message and spoken as a whole after a short pause or when the visitor submits it.
+## 2. Intended Use
 
-## Limitations
+- **Primary Goal**: Facilitate two-way conversation between Deaf/Hard-of-Hearing individuals and hearing non-signers by recognizing isolated sign poses and converting them into editable draft sentences for speech synthesis.
+- **Audience**: Individuals, families, educational groups, healthcare providers, and community workers interacting with ISL signers.
+- **Deployment Scope**: Web application with client-side inference on standard desktop and mobile browsers with camera access.
 
-- The classifier matches still hand landmarks. It does not recognize sign motion, facial expression, body posture, ISL grammar, or continuous sentences.
-- It can reject uncertain poses, but cannot reliably detect every out-of-vocabulary sign. Similar trained poses can still be confused.
-- Owner examples should include multiple consenting signers, lighting, distance, and camera variation. Held-out metrics are small prototype checks, not a real-world accuracy guarantee.
-- Personal signs are signer-, camera-, and lighting-dependent, and are available only in the browser where they were trained.
-- This prototype is not an interpreter replacement or suitable for safety-critical communication.
+---
 
-## Data governance
+## 3. Limitations & Out-of-Scope Use
 
-- Camera video is processed in the browser and is not uploaded by recognition.
-- With explicit consent, the owner trainer stores the silent camera clip in private backend storage and sends derived hand landmarks plus an anonymous signer code for shared model training. Video clips are available only through the authenticated owner workspace and are deleted with their example.
-- With consent, private derived landmarks and labels are stored in browser local storage.
-- Session notes are kept in the browser unless the user exports or deletes them.
+- **Static vs. Continuous Signing**: The current prototype identifies held or isolated hand poses. It does not transcribe continuous sign streaming, complex facial grammar, lip patterns, or body movement.
+- **Lighting & Camera Angles**: Recognition accuracy depends on clear lighting, hand visibility within the camera viewport, and minimal visual obstruction.
+- **Out-of-Vocabulary Signs**: While distance thresholds reject uncertain poses, similar unseen gestures can occasionally be misclassified.
+- **Safety-Critical Contexts**: SignBridge is an assistive communication aid; it is **not** a certified legal, medical, or emergency sign language interpreter.
 
-## Evaluation
+---
 
-No independent SignBridge accuracy results are claimed. The owner console reports held-out signer accuracy and coverage for the collected sample set. Evaluate with consenting ISL signers and Deaf ISL experts before wider use.
+## 4. Training Data & Dataset Governance
 
-## Licensing
+- **Explicit Consent**: All owner-recorded video samples require informed consent before recording.
+- **Storage Boundaries**:
+  - Regular visitor camera feeds are processed strictly in-browser via WASM and are never uploaded or recorded.
+  - Consented owner training clips are stored in a private server directory accessible only by authenticated administrators.
+  - Personal custom signs remain stored in local storage or encrypted account sync.
+- **Dataset Curation**: The owner platform enforces participant coding and train/validation splits to ensure unbiased model updates.
+- **Data Erasure**: Deleting an example or label completely removes the landmark entries, recalculates model centroids, and permanently purges stored video clips.
 
-See `THIRD_PARTY_NOTICES.md` for third-party model and runtime attribution. User-created examples remain under user control.
+---
+
+## 5. Evaluation & Performance
+
+- **Evaluation Metric**: Cross-signer held-out accuracy and vocabulary coverage across distinct participant codes.
+- **Prototypes vs. Field Deployment**: The owner console reports validation accuracy on the collected dataset. We advise thorough field trials with native Deaf ISL signers and accessibility advocates prior to production rollouts.
+
+---
+
+## 6. Ethical Considerations & Responsible AI
+
+- Inclusivity and user agency are central: recognized signs are held in an editable draft buffer, allowing users to correct or amend messages before speech synthesis.
+- Audio and speech captions are user-controlled, ensuring signers and speaking partners retain full oversight over the communication flow.

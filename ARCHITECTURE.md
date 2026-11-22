@@ -1,73 +1,114 @@
 # Architecture Overview
 
-## Directory Structure
+This document describes the high-level architecture, subsystem boundaries, data flows, and technology stack of the SignBridge AI Platform.
+
+---
+
+## 1. System Architecture
+
+SignBridge follows a client-centric architecture designed for low latency, user privacy, and responsiveness:
+
+```
++-----------------------------------------------------------------------------------+
+|                                  Browser Client                                   |
+|                                                                                   |
+|  +--------------------+   +---------------------+   +--------------------------+  |
+|  |   Video & Camera   |-->|   MediaPipe Vision  |-->|  Centroid / Personal     |  |
+|  |     (WebRTC)       |   |   (Local WASM Task) |   |  Held-Sign Classifier    |  |
+|  +--------------------+   +---------------------+   +------------+-------------+  |
+|                                                                  |                |
+|  +--------------------+   +---------------------+                v                |
+|  |     VoiceDesk      |<--|    Web Speech API   |<----+  Sentence Assembler &     |
+|  | (STT Captions/TTS) |   |    (Local Voices)   |     |  Debounce Buffer          |
+|  +--------------------+   +---------------------+     +------------------------+  |
++-----------------------------------------------------------------------------------+
+                                       |
+                   HTTP / REST Sessions & Supabase Sync
+                                       |
+                                       v
++-----------------------------------------------------------------------------------+
+|                                 FastAPI Backend                                   |
+|                                                                                   |
+|  +---------------------+  +----------------------+  +--------------------------+  |
+|  | Account & Sessions  |  |   Owner Studio API   |  | Translation & Model Host |  |
+|  |  (/api/v1/accounts) |  |   (/api/v1/owner)    |  |     (/api/v1/models)     |  |
+|  +----------+----------+  +----------+-----------+  +-------------+------------+  |
+|             |                        |                            |               |
+|             v                        v                            v               |
+|     +---------------+        +---------------+            +---------------+       |
+|     | SQLite DB     |        | Consent Video |            | Published     |       |
+|     | (SQLAlchemy)  |        | Directory     |            | Models JSON   |       |
+|     +---------------+        +---------------+            +---------------+       |
++-----------------------------------------------------------------------------------+
+```
+
+---
+
+## 2. Subsystems & Data Flow
+
+### A. Client-Side Sign Recognition Pipeline
+1. **Camera Feed**: Raw camera frames are captured using the browser `navigator.mediaDevices.getUserMedia` API.
+2. **Landmark Extraction**: Frames are fed into MediaPipe Hand Landmarker WASM assets running locally in the browser. Twenty-one 3D landmarks per detected hand are generated.
+3. **Normalization**: Hand landmark coordinates are normalized relative to wrist origin and hand span to remain invariant to distance from the lens.
+4. **Classification**:
+   - **Shared Model**: Compares normalized frame vector against the owner-published centroids (Euclidean distance with cosine verification).
+   - **Personal Signs**: Compares against personal family signs saved in user account/local storage.
+5. **Debouncing & Message Assembly**: Validated signs pass through a temporal stabilization window to prevent stutter and false triggers, then append to the editable message draft.
+
+### B. Two-Way Speech & Captions (VoiceDesk)
+1. **Signer to Spoken Audio**: Composed sentences trigger Web Speech API `SpeechSynthesis` (or pre-bundled regional audio recordings) for instant voice playback.
+2. **Hearing Partner to Text**: Browser `SpeechRecognition` captures live spoken replies and transcribes them onto the conversation view with support for multi-language captioning.
+3. **Translation Service**: Cross-language translation maps text between English, Hindi, Tamil, Telugu, and other regional languages via `/api/v1/translation`.
+
+### C. Owner Dataset Curation & Model Publishing
+1. **Consented Recording**: Authorized owners record 5-second video samples with explicit signer consent.
+2. **Feature Extraction**: Video clips produce normalized landmark sequences categorized with participant IDs and dataset splits (`train` / `val`).
+3. **Centroid Compilation**: When the owner hits **Publish**, the backend computes class centroids, calculates cross-signer held-out validation accuracy, and generates a new versioned `published-model.json`.
+4. **Version Control & Rollback**: Up to 20 past versions are preserved in storage, enabling instantaneous rollback via `/api/v1/owner/versions/{ver}/activate`.
+
+### D. Authentication & State Sync
+1. **Local Accounts**: Database-backed sessions stored in SQLite with password hashing and session tokens.
+2. **Supabase Integration**: Optional verified identity exchange supporting Email OTP, Phone SMS, and OAuth providers (Google, Apple, Facebook).
+3. **Cloud Saves**: Syncs user UI preferences, favorites, learning module progress, and custom family gestures (subject to 5 MB account limit).
+
+---
+
+## 3. Directory Layout
+
 ```
 signbridge-ai-platform/
-├── docker-compose.yml      # Local development services
-├── dockerfile              # Production build for backend
-├── frontend/               # React + TypeScript application
-│   ├── src/
-│   │   ├── components/     # Reusable UI components
-│   │   ├── hooks/          # Custom React hooks
-│   │   ├── lib/            # Utility functions
-│   │   ├── pages/          # Application pages (6 divisions + landing)
-│   │   ├── App.tsx         # Main routing
-│   │   └── main.tsx        # Entry point
-│   └── vite.config.ts
-├── backend/                # FastAPI Python API
+├── backend/
 │   ├── app/
-│   │   ├── models/         # SQLAlchemy database models
-│   │   ├── routers/        # API route handlers
-│   │   ├── schemas/        # Pydantic request/response schemas
-│   │   ├── services/       # Business logic (trainer, etc.)
-│   │   ├── database.py     # Database configuration
-│   │   └── main.py         # FastAPI app entry
-│   ├── init_db.py          # Database initialization
-│   └── requirements.txt
-├── tests/                  # Python unit/API tests
-├── MODEL_CARD.md
-├── PRIVACY.md
-├── README.md
-└── .env.example
+│   │   ├── models/          # SQLAlchemy ORM models (Accounts, Examples, Transcripts, Consent)
+│   │   ├── routers/         # Endpoint modules (account, auth, owner, translation, enrollment)
+│   │   ├── services/        # Business logic (centroid trainer, video processing)
+│   │   ├── database.py      # SQLite connection & session pool
+│   │   └── main.py          # FastAPI application factory
+│   ├── tests/               # Pytest suite
+│   └── requirements.txt     # Backend dependencies
+├── frontend/
+│   ├── public/              # Static files, PWA manifest, WASM binaries, audio
+│   ├── src/
+│   │   ├── components/      # UI widgets (HandOverlay, SentenceTranslator, VoiceDesk, etc.)
+│   │   ├── hooks/           # useCamera, useMediaPipe
+│   │   ├── lib/             # API client, speech synthesis, auto-translate, Supabase
+│   │   ├── pages/           # Landing, ConversationStudio, LearnISL, CommunicationHub, etc.
+│   │   ├── styles/          # Tailwind CSS tokens
+│   │   └── App.tsx          # Router configuration
+│   └── tests/               # Speech and translation test suite
+├── docs/                    # UI specs, setup guides, upgrade roadmap
+├── MODEL_CARD.md            # Model card & algorithmic ethics
+├── PRIVACY.md               # Privacy disclosures
+└── README.md                # Quickstart and overview
 ```
 
-## Data Flow
+---
 
-1. **User Authentication** (Planned)
-   - Session-based authentication
-   - User preferences stored locally
+## 4. Technology Stack Summary
 
-2. **Enrollment Flow**
-   - User records sign examples via camera
-   - Examples stored with explicit consent
-   - Trainer builds personalized classifier
-   - Model saved locally
-
-3. **Recognition Flow**
-   - Camera feed analyzed in overlapping windows
-   - Landmark detection → normalized → classifier
-   - Temporal debounce suppresses repeats
-   - Stable signs added to transcript
-   - Automatic speech output via Web Speech API
-
-## Backend API Routes
-- `GET /health` - Health check
-- `GET /api/v1/models` - Available models
-- `POST /api/v1/enrollment/` - Add sign example
-- `GET /api/v1/enrollment/status` - Training status
-- `POST /api/v1/transcripts/` - Save transcript
-- `GET /api/v1/transcripts/` - List transcripts
-- `POST /api/v1/consent/` - Record consent
-
-## Frontend Components
-- `Layout` - Navigation and footer
-- `Button` - Accessible button with variants
-- `SignCamera` - Camera preview with controls
-- `useCamera` - MediaDevices hook
-- `useSignRecognition` - Recognition state machine
-- 6 Division pages + NotFound
-
-## Tech Stack
-- **Frontend**: React 19, TypeScript, Vite, Tailwind CSS
-- **Backend**: FastAPI, SQLAlchemy, SQLite, Pydantic
-- **Deployment**: Docker Compose
+- **Frontend**: React 19, TypeScript, Vite, Tailwind CSS v4, Lucide React, Three.js
+- **Vision & ML**: MediaPipe Tasks-Vision WASM, Centroid Classifier
+- **Backend API**: FastAPI, Uvicorn, Python 3.11+, Pydantic v2
+- **Database**: SQLite with SQLAlchemy 2.0 ORM, aiosqlite
+- **Auth & Identity**: Database session tokens + Supabase Auth
+- **Containerization**: Docker Compose

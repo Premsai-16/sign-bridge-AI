@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from datetime import UTC, datetime, timedelta
 import secrets
@@ -15,6 +16,10 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 security = HTTPBearer()
 
 SESSION_DURATION_HOURS = 24
+
+class AdminCredentials(BaseModel):
+    username: str
+    password: str
 
 active_sessions: dict[str, dict] = {}
 
@@ -44,6 +49,7 @@ def create_session(username: str) -> str:
     session_id = secrets.token_urlsafe(32)
     active_sessions[session_id] = {
         "username": username,
+        "role": "user",
         "expires_at": datetime.now(UTC) + timedelta(hours=SESSION_DURATION_HOURS)
     }
     return session_id
@@ -66,6 +72,28 @@ def validate_session(credentials: HTTPAuthorizationCredentials = Depends(securit
         )
 
     return session["username"]
+
+
+def validate_admin_session(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+    token = credentials.credentials
+    session = active_sessions.get(token)
+    if not session or session.get("role") != "admin" or datetime.now(UTC) > session["expires_at"]:
+        active_sessions.pop(token, None)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Owner sign-in required")
+    return session["username"]
+
+
+@router.post("/admin/login")
+async def admin_login(credentials: AdminCredentials):
+    username = os.getenv("ADMIN_USERNAME")
+    password = os.getenv("ADMIN_PASSWORD")
+    if not username or not password:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Owner sign-in is not configured. Set ADMIN_USERNAME and ADMIN_PASSWORD on the server.")
+    if not secrets.compare_digest(credentials.username, username) or not secrets.compare_digest(credentials.password, password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect owner username or password")
+    token = secrets.token_urlsafe(32)
+    active_sessions[token] = {"username": username, "role": "admin", "expires_at": datetime.now(UTC) + timedelta(hours=SESSION_DURATION_HOURS)}
+    return {"access_token": token, "token_type": "bearer", "expires_in": SESSION_DURATION_HOURS * 3600}
 
 
 @router.post("/register", response_model=SessionResponse)

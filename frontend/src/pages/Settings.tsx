@@ -1,3 +1,4 @@
+import { accountStorage } from '../lib/account'
 import { useEffect, useState } from 'react'
 import { Volume2, Shield, Palette, Camera, Coffee } from 'lucide-react'
 import { clearSessions, getSavedSessions } from '../lib/sessions'
@@ -5,27 +6,27 @@ import { clearSignExamples, loadSignExamples } from '../lib/personalized-signs'
 
 export default function Settings() {
   const [darkMode, setDarkMode] = useState(() => document.documentElement.classList.contains('dark'))
-  const [autoSpeak, setAutoSpeak] = useState(() => localStorage.getItem('signbridge-auto-speak') !== 'false')
-  const [highContrast, setHighContrast] = useState(() => localStorage.getItem('signbridge-high-contrast') === 'true')
-  const [reducedMotion, setReducedMotion] = useState(() => localStorage.getItem('signbridge-reduced-motion') === 'true')
-  const [cameraQuality, setCameraQuality] = useState(() => localStorage.getItem('signbridge-camera-quality') || '720p')
-  const [voice, setVoice] = useState(() => localStorage.getItem('signbridge-voice') || 'en-IN')
-  const [speechRate, setSpeechRate] = useState(() => localStorage.getItem('signbridge-speech-rate') || '1')
+  const [autoSpeak, setAutoSpeak] = useState(() => accountStorage.getItem('signbridge-auto-speak') !== 'false')
+  const [highContrast, setHighContrast] = useState(() => accountStorage.getItem('signbridge-high-contrast') === 'true')
+  const [reducedMotion, setReducedMotion] = useState(() => accountStorage.getItem('signbridge-reduced-motion') === 'true')
+  const [cameraQuality, setCameraQuality] = useState(() => accountStorage.getItem('signbridge-camera-quality') || '720p')
+  const [voice, setVoice] = useState(() => accountStorage.getItem('signbridge-voice') || 'en-IN')
+  const [speechRate, setSpeechRate] = useState(() => accountStorage.getItem('signbridge-speech-rate') || '1')
   const [notice, setNotice] = useState('')
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode)
-    localStorage.setItem('signbridge-theme', darkMode ? 'dark' : 'light')
+    accountStorage.setItem('signbridge-theme', darkMode ? 'dark' : 'light')
   }, [darkMode])
 
   useEffect(() => {
     document.documentElement.classList.toggle('high-contrast', highContrast)
-    localStorage.setItem('signbridge-high-contrast', String(highContrast))
+    accountStorage.setItem('signbridge-high-contrast', String(highContrast))
   }, [highContrast])
 
   useEffect(() => {
     document.documentElement.classList.toggle('reduced-motion', reducedMotion)
-    localStorage.setItem('signbridge-reduced-motion', String(reducedMotion))
+    accountStorage.setItem('signbridge-reduced-motion', String(reducedMotion))
   }, [reducedMotion])
 
   const exportData = () => {
@@ -43,14 +44,14 @@ export default function Settings() {
     if (!window.confirm('Delete all saved sessions, personal sign examples, and study progress from this browser? This cannot be undone.')) return
     clearSessions()
     clearSignExamples()
-    localStorage.removeItem('signbridge-practice')
-    localStorage.removeItem('signbridge-community-interests')
+    accountStorage.removeItem('signbridge-practice')
+    accountStorage.removeItem('signbridge-community-interests')
     setNotice('Saved sessions, sign examples, and study progress were deleted from this browser.')
   }
 
   return (
-    <div className="container py-8 max-w-7xl">
-      <div className="flex flex-col gap-4 mb-6">
+    <div className="prism-page container py-8 max-w-7xl">
+      <div className="prism-page-heading flex flex-col gap-4 mb-6">
         <h1 className="font-display text-3xl font-bold tracking-tight">Settings</h1>
         <p className="text-muted-foreground max-w-2xl">
           Customize your SignBridge AI experience to match your preferences and workflow.
@@ -93,7 +94,7 @@ export default function Settings() {
 
               <div>
                 <label className="text-sm font-medium mb-2 block">Camera Quality</label>
-                <select value={cameraQuality} onChange={event => { setCameraQuality(event.target.value); localStorage.setItem('signbridge-camera-quality', event.target.value) }} className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm">
+                <select value={cameraQuality} onChange={event => { setCameraQuality(event.target.value); accountStorage.setItem('signbridge-camera-quality', event.target.value) }} className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm">
                   <option value="720p">720p (Recommended)</option>
                   <option value="1080p">1080p</option>
                   <option value="480p">480p (Low bandwidth)</option>
@@ -112,23 +113,36 @@ export default function Settings() {
             <div className="space-y-4">
               <ToggleSetting
                 checked={autoSpeak}
-                onChange={value => { setAutoSpeak(value); localStorage.setItem('signbridge-auto-speak', String(value)) }}
+                onChange={value => { setAutoSpeak(value); accountStorage.setItem('signbridge-auto-speak', String(value)) }}
                 label="Auto-speak recognized signs"
-                description="Read each recognized sign aloud automatically. Manual Speak buttons still work when this is off."
+                description="Speak the assembled sign message after a short pause. Manual Speak buttons still work when this is off."
               />
 
               <div>
                 <label className="text-sm font-medium mb-2 block">Voice</label>
-                <select value={voice} onChange={event => { setVoice(event.target.value); localStorage.setItem('signbridge-voice', event.target.value) }} className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm">
+                <select value={voice} onChange={event => { setVoice(event.target.value); accountStorage.setItem('signbridge-voice', event.target.value) }} className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm">
                   <option value="en-IN">English (India)</option>
                   <option value="en-US">English (United States)</option>
+                  <option value="en-GB">English (United Kingdom)</option>
                   <option value="hi-IN">Hindi (India)</option>
+                  <option value="bn-IN">Bengali (India)</option>
+                  <option value="gu-IN">Gujarati (India)</option>
+                  <option value="kn-IN">Kannada (India)</option>
+                  <option value="ml-IN">Malayalam (India)</option>
+                  <option value="mr-IN">Marathi (India)</option>
+                  <option value="pa-IN">Punjabi (India)</option>
+                  <option value="ta-IN">Tamil (India)</option>
+                  <option value="te-IN">Telugu (India)</option>
+                  <option value="ur-IN">Urdu (India)</option>
+                  <option value="es-ES">Spanish</option>
+                  <option value="fr-FR">French</option>
+                  <option value="ar-SA">Arabic</option>
                 </select>
               </div>
 
               <div>
                 <label className="text-sm font-medium mb-2 block">Speech Speed</label>
-                <select value={speechRate} onChange={event => { setSpeechRate(event.target.value); localStorage.setItem('signbridge-speech-rate', event.target.value) }} className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm">
+                <select value={speechRate} onChange={event => { setSpeechRate(event.target.value); accountStorage.setItem('signbridge-speech-rate', event.target.value) }} className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm">
                   <option value="0.5">0.5×</option>
                   <option value="0.75">0.75×</option>
                   <option value="0.9">0.9×</option>
@@ -140,7 +154,7 @@ export default function Settings() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-border bg-card p-6"><h2 className="font-display text-xl font-semibold">Speech support</h2><p className="mt-3 text-sm leading-6 text-muted-foreground">Speech input depends on your browser. Text-to-speech uses voices installed on your device; the selected language is a preference and may fall back to an available voice.</p></div>
+          <div className="rounded-2xl border border-border bg-card p-6"><h2 className="font-display text-xl font-semibold">Speech support</h2><p className="mt-3 text-sm leading-6 text-muted-foreground">Speech input depends on your browser. Common phrases have built-in audio in five languages. Custom text uses a matching device voice. Open Voice controls in Live Studio to test playback, select a voice, and adjust volume.</p></div>
         </div>
       </div>
 
@@ -195,15 +209,18 @@ function ToggleSetting({ checked, onChange, label, description }: {
         <p className="text-xs text-muted-foreground">{description}</p>
       </div>
       <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
         onClick={() => onChange(!checked)}
-        className={`flex items-center justify-center w-9 h-5 rounded-full transition-colors ${
+        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary ${
           checked ? 'bg-primary' : 'bg-muted'
         }`}
         aria-label={label}
       >
-        <div
-          className={`w-4 h-4 rounded-full bg-white shadow transition-transform ${
-            checked ? 'translate-x-4' : 'translate-x-0.5'
+        <span
+          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+            checked ? 'translate-x-5' : 'translate-x-0'
           }`}
         />
       </button>

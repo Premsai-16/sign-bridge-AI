@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from ..database import SessionLocal
 from ..models import UserExample
 from ..schemas import ExampleCreate, ExampleResponse, EnrollmentStatus
+from .auth import validate_admin_session
 
 router = APIRouter(prefix="/api/v1/enrollment", tags=["enrollment"])
 
@@ -14,12 +15,8 @@ def get_db():
         db.close()
 
 @router.post("/", response_model=ExampleResponse)
-async def add_example(example: ExampleCreate, db: Session = Depends(get_db)):
-    db_example = UserExample(**example.model_dump())
-    db.add(db_example)
-    db.commit()
-    db.refresh(db_example)
-    return db_example
+async def add_example(example: ExampleCreate, _: str = Depends(validate_admin_session)):
+    raise HTTPException(status_code=410, detail="Use the owner video trainer to save consented video and motion examples.")
 
 @router.get("/status", response_model=EnrollmentStatus)
 async def get_status(db: Session = Depends(get_db)):
@@ -30,7 +27,7 @@ async def get_status(db: Session = Depends(get_db)):
     return EnrollmentStatus(
         total_examples=len(examples),
         labels=labels,
-        min_examples=5,
-        is_ready=len(examples) >= 5,
+        min_examples=10,
+        is_ready=bool(balance) and all(count >= 10 for count in balance.values()),
         class_balance=balance
     )

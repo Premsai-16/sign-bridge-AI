@@ -1,3 +1,4 @@
+import { accountStorage } from '../lib/account'
 import { useCallback, useRef, useState, useEffect } from 'react'
 
 export interface CameraState {
@@ -31,7 +32,7 @@ export function useCamera() {
     })
   }, [state.stream])
 
-  const start = useCallback(async (): Promise<boolean> => {
+  const start = useCallback(async (facingMode: 'user' | 'environment' = 'user'): Promise<boolean> => {
     setState(s => ({ ...s, isLoading: true, error: null }))
 
     try {
@@ -39,18 +40,24 @@ export function useCamera() {
         throw new Error('Camera access is unavailable. Open this site on localhost or use HTTPS in a supported browser.')
       }
 
-      const quality = localStorage.getItem('signbridge-camera-quality') || '720p'
+      const quality = accountStorage.getItem('signbridge-camera-quality') || '720p'
       const dimensions = quality === '1080p' ? [1920, 1080] : quality === '480p' ? [854, 480] : [1280, 720]
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: dimensions[0] },
           height: { ideal: dimensions[1] },
-          facingMode: 'user',
+          facingMode: { ideal: facingMode },
         },
         audio: false,
       })
 
+      streamRef.current?.getTracks().forEach(track => track.stop())
       streamRef.current = stream
+      stream.getVideoTracks().forEach(track => { track.onended = () => {
+        if (streamRef.current !== stream) return
+        streamRef.current = null
+        setState({ isActive: false, isLoading: false, stream: null, error: 'Camera disconnected. Reconnect it and start the camera again.' })
+      } })
 
       setState({
         isActive: true,

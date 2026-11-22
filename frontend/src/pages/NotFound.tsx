@@ -2,7 +2,7 @@ import { Home, ArrowLeft } from 'lucide-react'
 
 export default function NotFound() {
   return (
-    <div className="container flex flex-col items-center justify-center min-h-[70vh] py-8 text-center">
+    <div className="prism-page container flex flex-col items-center justify-center min-h-[70vh] py-8 text-center">
       <div className="max-w-md mx-auto px-4">
         <div className="mb-6">
           <span className="text-8xl font-bold text-primary/20">404</span>

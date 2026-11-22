@@ -1,3 +1,4 @@
+import { accountStorage } from '../lib/account'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Users, BookOpen, CheckCircle, ExternalLink, Info } from 'lucide-react'
@@ -10,17 +11,17 @@ const interests = [
 
 export default function Community() {
   const [following, setFollowing] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('signbridge-community-interests') || '[]') as string[] } catch { return [] }
+    try { return JSON.parse(accountStorage.getItem('signbridge-community-interests') || '[]') as string[] } catch { return [] }
   })
   const toggleFollowing = (name: string) => {
     const next = following.includes(name) ? following.filter(item => item !== name) : [...following, name]
     setFollowing(next)
-    localStorage.setItem('signbridge-community-interests', JSON.stringify(next))
+    accountStorage.setItem('signbridge-community-interests', JSON.stringify(next))
   }
 
   return (
-    <div className="container max-w-7xl py-10">
-      <div className="mb-8 flex flex-col gap-3">
+    <div className="prism-page container max-w-7xl py-10">
+      <div className="prism-page-heading mb-8 flex flex-col gap-3">
         <span className="text-sm font-semibold uppercase tracking-[0.16em] text-primary">Learning together</span>
         <h1 className="font-display text-4xl font-bold tracking-tight">Community</h1>
         <p className="max-w-2xl text-muted-foreground">Save the topics you want to follow in this browser and jump into the learning tools available in this build.</p>

@@ -1,20 +1,27 @@
+import { accountStorage } from '../../lib/account'
 import { useEffect, useState } from 'react'
 import { Moon, Sun } from 'lucide-react'
 
 export default function ThemeToggle() {
   const [isDark, setIsDark] = useState(() => {
-    const stored = localStorage.getItem('signbridge-theme')
-    return stored ? stored === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches
+    const stored = accountStorage.getItem('signbridge-theme')
+    return stored === 'dark'
   })
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark)
   }, [isDark])
 
+  useEffect(() => {
+    const observer = new MutationObserver(() => setIsDark(document.documentElement.classList.contains('dark')))
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+    return () => observer.disconnect()
+  }, [])
+
   const toggle = () => {
     const next = !isDark
     setIsDark(next)
-    localStorage.setItem('signbridge-theme', next ? 'dark' : 'light')
+    accountStorage.setItem('signbridge-theme', next ? 'dark' : 'light')
     document.documentElement.classList.toggle('dark', next)
   }
 

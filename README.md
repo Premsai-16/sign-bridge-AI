@@ -3,12 +3,12 @@
 An accessibility-focused web application for Indian Sign Language (ISL) communication workflows, browser speech tools, and local session management.
 
 ## Product Goal
-SignBridge provides on-device hand detection, experimental recognition for a published 11-sign ISL vocabulary, optional personal held-sign enrollment, typed/spoken conversation tools, and local study tracking. It does not translate continuous ISL sentences or animate sign output.
+SignBridge provides a public conversation screen with camera-based isolated-sign recognition, browser speech captions, and spoken output. Owners can collect consented shared examples and publish a limited prototype model for all visitors. It does not translate continuous ISL sentences or animate sign output.
 
 ## Architecture
 - **Frontend**: React + TypeScript + Vite + Tailwind CSS
 - **Backend**: FastAPI + Python + SQLite
-- **Recognition status**: Browser hand detection, a limited 11-class isolated-sign model, and consent-based personal held-sign matching are available. Continuous ISL translation, dynamic signs, and grammar are not supported.
+- **Recognition status**: Browser hand detection, an optional owner-published shared prototype model, and private held-sign matching are available. No shared labels are bundled. Continuous ISL translation, dynamic signs, and grammar are not supported.
 
 ## Quick Start
 
@@ -34,22 +34,32 @@ pip install -r requirements.txt
 ### Development
 
 ```bash
+# From the repository root: create .env from .env.example and set a private owner username/password.
+cp .env.example .env
+
 # Start backend
 cd backend
-uvicorn app.main:app --reload --port 8000
+set -a; source ../.env; set +a
+uvicorn app.main:app --reload --port 8001
 
 # Start frontend (new terminal)
 cd frontend
 npm run dev
 ```
 
-Visit http://localhost:5173
+Visit http://localhost:5173. Camera access on phones and other devices requires HTTPS; localhost is the only common exception. For mobile use, deploy the site and API behind HTTPS and set `VITE_API_URL` and `CORS_ORIGINS` to the deployed addresses. In supported production browsers, install SignBridge as an app from the visible **Install app** button or the browser menu. The app shell and sign-detection assets are cached after first use; speech captions and new shared-model updates may require a connection.
 
 ### Live recognition and speech
 
-Open **Live Translate**, allow camera access, and use the **11 sign model** for the bundled isolated vocabulary. Hold a sign clearly in view; accepted labels appear in the transcript. **Speak each recognized sign aloud** reads accepted labels using a voice installed on the device. Press **Test voice** once if the browser blocks speech until a user gesture. You can also choose **My vocabulary** and enroll at least five examples for a sign. A single trained label can now be recognized; adding labels improves rejection of other hand shapes.
+Open the conversation screen and allow camera access. Only labels in the owner's published isolated-sign vocabulary or the visitor's private family vocabulary can be recognized. Recognized labels collect into one editable message; after a short pause, the message is added to the conversation and spoken once when voice is enabled. Edit the draft or use **Send & speak** to take manual control. Use **Caption speech** to turn a partner's spoken replies into text; browser support and recognition quality vary by device and language.
 
-The bundled model recognizes only `cellphone`, `good`, `hello`, `house`, `I`, `loud`, `quiet`, `red`, `shoes`, `teacher`, and `time`. It produces individual English labels, not full sentence translations. For accurate continuous ISL, this project still needs a signer-diverse consented dataset, a temporal model, and evaluation with Deaf ISL experts.
+There is no fallback vocabulary. If the owner has not published a model, shared sign recognition stays blank rather than guessing labels. Even with a published model, the prototype recognizes isolated held poses and does not translate ISL grammar or full sign-language sentences.
+
+### Owner training
+
+Configure `ADMIN_USERNAME` and `ADMIN_PASSWORD` on the server before using `/owner/trainer`. The public app has no user sign-in. After explicit signer consent, the owner trainer records a 5-second silent video after a 1-second countdown, stores that clip privately for owner review, and sends derived hand-motion frames for shared training. Delete one sample or a whole label from the owner console; deleting also removes its saved clip. A label can be published after 10 training clips. Separate validation clips from different signers are recommended and reported but do not block publishing. The console keeps up to 20 model versions and supports rollback. Metrics from this small prototype do not guarantee field accuracy. The API stores examples in its configured database, private clips under `OWNER_VIDEO_DIR` (defaults beside the model), and the published model and history under `SHARED_MODEL_PATH` (Docker uses `/data/published-model.json`).
+
+For Docker deployments, set `ADMIN_USERNAME` and a long random `ADMIN_PASSWORD` in the Compose environment. Admin sessions are held in server memory, so use a single API worker unless session storage is moved to a shared secure store.
 
 ### Docker
 
@@ -57,7 +67,7 @@ The bundled model recognizes only `cellphone`, `good`, `hello`, `house`, `I`, `l
 docker compose up --build
 ```
 
-The web app is served at http://localhost:5173 and the API at http://localhost:8000. Set `VITE_API_URL` and `CORS_ORIGINS` when deploying on different hosts.
+The web app is served at http://localhost:5173 and the development API at http://localhost:8001 (proxied through the web app). Set `VITE_API_URL` and `CORS_ORIGINS` when deploying on different hosts.
 
 ## Project Structure
 

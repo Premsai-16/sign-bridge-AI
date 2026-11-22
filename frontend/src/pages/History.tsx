@@ -24,8 +24,8 @@ export default function History() {
   }
 
   return (
-    <div className="container max-w-7xl py-10">
-      <div className="mb-8 flex flex-col gap-3">
+    <div className="prism-page container max-w-7xl py-10">
+      <div className="prism-page-heading mb-8 flex flex-col gap-3">
         <span className="text-sm font-semibold uppercase tracking-[0.16em] text-primary">Your workspace</span>
         <h1 className="font-display text-4xl font-bold tracking-tight">Conversation history</h1>
         <p className="max-w-2xl text-muted-foreground">Saved sessions stay in this browser unless you choose to export them.</p>

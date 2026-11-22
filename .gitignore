@@ -37,8 +37,17 @@ logs/
 secrets/
 data/user_samples/
 data/biometric/
+data/published-model.json
+data/model-versions/
+backend/data/published-model.json
+backend/data/model-versions/
+backend/data/training-videos/
+data/training-videos/
 
 # Local repository backup and generated data
 .git.backup/
 *.db
 *.zip
+
+backend/data/translations.json
+data/translations.json

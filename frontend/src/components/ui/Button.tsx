@@ -17,7 +17,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         <Link
           to={to}
           className={cn(
-            'inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors',
+            'inline-flex items-center justify-center rounded-xl gap-2 text-sm font-semibold transition-colors',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
             'disabled:pointer-events-none disabled:opacity-50',
             {
@@ -30,9 +30,9 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
               'bg-primary text-primary-foreground hover:bg-primary/90 shadow-md': variant === 'primary',
             },
             {
-              'h-6 px-3 text-xs': size === 'xs',
-              'h-8 px-4': size === 'sm',
-              'h-10 px-4 py-2': size === 'default',
+              'min-h-11 px-3 text-xs': size === 'xs',
+              'min-h-11 px-4': size === 'sm',
+              'min-h-11 px-4 py-2': size === 'default',
               'h-11 px-6': size === 'lg',
               'h-12 px-8 text-base': size === 'xl',
             },
@@ -49,7 +49,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         ref={ref}
         disabled={disabled || loading}
         className={cn(
-          'inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors',
+          'inline-flex items-center justify-center rounded-xl gap-2 text-sm font-semibold transition-colors',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
           'disabled:pointer-events-none disabled:opacity-50',
           {
@@ -62,9 +62,9 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
             'bg-primary text-primary-foreground hover:bg-primary/90 shadow-md': variant === 'primary',
           },
           {
-            'h-6 px-3 text-xs': size === 'xs',
-            'h-8 px-4': size === 'sm',
-            'h-10 px-4 py-2': size === 'default',
+            'min-h-11 px-3 text-xs': size === 'xs',
+            'min-h-11 px-4': size === 'sm',
+            'min-h-11 px-4 py-2': size === 'default',
             'h-11 px-6': size === 'lg',
             'h-12 px-8 text-base': size === 'xl',
           },

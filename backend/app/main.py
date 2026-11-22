@@ -1,13 +1,24 @@
 import os
+import json
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import inspect, text
 from .database import engine
 from .models import Base
-from .routers import enrollment, transcript, consent, auth, realtime
+from .routers import enrollment, transcript, consent, auth, realtime, owner, translation, account
 
 # Ensure the configured database has its schema in both local and container runs.
 Base.metadata.create_all(bind=engine)
+with engine.begin() as connection:
+    example_columns = {column["name"] for column in inspect(engine).get_columns("user_examples")}
+    if "dataset_split" not in example_columns:
+        connection.execute(text("ALTER TABLE user_examples ADD COLUMN dataset_split VARCHAR(12) NOT NULL DEFAULT 'train'"))
+    if "participant_code" not in example_columns:
+        connection.execute(text("ALTER TABLE user_examples ADD COLUMN participant_code VARCHAR(24) NOT NULL DEFAULT 'legacy'"))
+    if "clip_path" not in example_columns:
+        connection.execute(text("ALTER TABLE user_examples ADD COLUMN clip_path VARCHAR(500)"))
 
 app = FastAPI(
     title="SignBridge AI API",
@@ -28,6 +39,9 @@ app.include_router(transcript.router)
 app.include_router(consent.router)
 app.include_router(auth.router)
 app.include_router(realtime.router)
+app.include_router(owner.router)
+app.include_router(translation.router)
+app.include_router(account.router)
 
 @app.get("/")
 async def root():
@@ -39,16 +53,27 @@ async def health():
 
 @app.get("/api/v1/models")
 async def list_models():
+    configured_path = os.getenv("SHARED_MODEL_PATH")
+    model_file = Path(configured_path) if configured_path else Path(__file__).resolve().parents[1] / "data" / "published-model.json"
+    published = False
+    labels: list[str] = []
+    if model_file.is_file():
+        try:
+            model = json.loads(model_file.read_text(encoding="utf-8"))
+            published = bool(model.get("labels"))
+            labels = model.get("labels", []) if published else []
+        except (OSError, json.JSONDecodeError):
+            pass
     return {
         "models": [
             {
-                "id": "isl-experimental-11",
-                "name": "ISL Experimental Isolated Sign Vocabulary",
+                "id": "owner-shared-isolated-signs",
+                "name": "Owner-trained shared sign vocabulary",
                 "language": "Indian Sign Language",
-                "status": "experimental_limited_vocabulary",
+                "status": "experimental" if published else "awaiting_owner_training",
                 "requires_enrollment": False,
-                "scope": "11 isolated signs in the browser; continuous ISL translation is not supported",
-                "labels": ["cellphone", "good", "hello", "house", "I", "loud", "quiet", "red", "shoes", "teacher", "time"],
+                "scope": "Owner-published isolated signs only; continuous ISL translation is not supported",
+                "labels": labels,
                 "personal_enrollment_available": True
             }
         ]

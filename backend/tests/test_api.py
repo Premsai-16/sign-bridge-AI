@@ -33,18 +33,12 @@ def test_enrollment_status_empty():
     assert data["is_ready"] is False
     assert data["total_examples"] == 0
 
-def test_add_example_and_get_status():
+def test_legacy_enrollment_rejects_unauthenticated_writes():
     response = client.post("/api/v1/enrollment/", json={
-        "label": "hello",
-        "landmarks": json.dumps([1.0, 2.0, 3.0]),
-        "consented": True
+        "label": "hello", "landmarks": json.dumps([1.0, 2.0, 3.0]), "consented": True
     })
-    assert response.status_code == 200
-    assert response.json()["label"] == "hello"
-
-    status = client.get("/api/v1/enrollment/status").json()
-    assert status["total_examples"] == 1
-    assert "hello" in status["labels"]
+    assert response.status_code in (401, 403)
+    assert client.get("/api/v1/enrollment/status").json()["total_examples"] == 0
 
 def test_save_transcript():
     response = client.post("/api/v1/transcripts/", json={

@@ -1,0 +1,15 @@
+{
+  "id": "/",
+  "name": "SignBridge AI Conversation",
+  "short_name": "SignBridge",
+  "description": "A private, on-device sign and speech conversation workspace.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f8f7f3",
+  "theme_color": "#554de8",
+  "icons": [
+    { "src": "/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

@@ -1,8 +1,9 @@
+import { accountStorage } from '../lib/account'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Camera, Check, Copy, LoaderCircle, Save, ShieldCheck, Square, Trash2, Volume2 } from 'lucide-react'
+import { AlertTriangle, Camera, Check, Copy, Download, LoaderCircle, Save, ShieldCheck, Square, Trash2, Upload, Volume2 } from 'lucide-react'
 import { useCamera } from '../hooks/useCamera'
 import { useMediaPipe } from '../hooks/useMediaPipe'
-import { clearSignExamples, deleteSignExamples, exampleCounts, loadSignExamples, MIN_EXAMPLES_PER_SIGN, predictPersonalSign, saveSignExample, type SignExample } from '../lib/personalized-signs'
+import { clearSignExamples, deleteSignExample, deleteSignExamples, exampleCounts, importSignExamples, loadSignExamples, MIN_EXAMPLES_PER_SIGN, predictPersonalSign, renameSignExamples, saveSignExample, type SignExample } from '../lib/personalized-signs'
 import { saveSession } from '../lib/sessions'
 import { loadIsolatedSignModel, predictIsolatedSign, type IsolatedSignModel, type SignPrediction } from '../lib/isl-model'
 import { speakText } from '../lib/speech'
@@ -20,11 +21,14 @@ export default function LiveTranslate() {
   const [recording, setRecording] = useState(false)
   const [statusMessage, setStatusMessage] = useState('')
   const [transcript, setTranscript] = useState<string[]>([])
-  const [speechEnabled, setSpeechEnabled] = useState(() => localStorage.getItem('signbridge-auto-speak') !== 'false')
+  const [speechEnabled, setSpeechEnabled] = useState(() => accountStorage.getItem('signbridge-auto-speak') !== 'false')
   const [speechStatus, setSpeechStatus] = useState('Speech is ready when enabled.')
   const [recognitionMode, setRecognitionMode] = useState<'published' | 'personal'>(() => loadSignExamples().length ? 'personal' : 'published')
   const [islModel, setIslModel] = useState<IsolatedSignModel | null>(null)
   const [modelError, setModelError] = useState<string | null>(null)
+  const [expandedSign, setExpandedSign] = useState<string | null>(null)
+  const [practiceTarget, setPracticeTarget] = useState<string | null>(null)
+  const [practiceScore, setPracticeScore] = useState(() => Number(accountStorage.getItem('signbridge-live-practice-score') || '0'))
   const [publishedPrediction, setPublishedPrediction] = useState<SignPrediction | null>(null)
   const recentPredictionsRef = useRef<Array<SignPrediction | null>>([])
   const captureFramesRef = useRef<number[][]>([])
@@ -129,7 +133,7 @@ export default function LiveTranslate() {
       emittedLabelRef.current = prediction.label
       setTranscript(current => [...current, prediction.label])
       if (speechEnabled) {
-        const started = speakText(prediction.label, localStorage.getItem('signbridge-voice') || 'en-IN', Number(localStorage.getItem('signbridge-speech-rate') || '1'), {
+        const started = speakText(prediction.label, accountStorage.getItem('signbridge-voice') || 'en-IN', Number(accountStorage.getItem('signbridge-speech-rate') || '1'), {
           onStart: () => setSpeechStatus(`Speaking “${prediction.label}”.`),
           onEnd: () => setSpeechStatus('Speech finished.'),
           onError: message => setSpeechStatus(message),
@@ -170,7 +174,7 @@ export default function LiveTranslate() {
 
   const speakTranscript = () => {
     if (!transcript.length) return
-    const started = speakText(transcript.join(' '), localStorage.getItem('signbridge-voice') || 'en-IN', Number(localStorage.getItem('signbridge-speech-rate') || '1'), {
+    const started = speakText(transcript.join(' '), accountStorage.getItem('signbridge-voice') || 'en-IN', Number(accountStorage.getItem('signbridge-speech-rate') || '1'), {
       onStart: () => setSpeechStatus('Speaking transcript.'),
       onEnd: () => setSpeechStatus('Speech finished.'),
       onError: message => setSpeechStatus(message),
@@ -207,13 +211,13 @@ export default function LiveTranslate() {
 
   const toggleSpeech = (enabled: boolean) => {
     setSpeechEnabled(enabled)
-    localStorage.setItem('signbridge-auto-speak', String(enabled))
+    accountStorage.setItem('signbridge-auto-speak', String(enabled))
     if (!enabled) { window.speechSynthesis?.cancel(); setSpeechStatus('Automatic speech is off.') }
     else setSpeechStatus('Automatic speech is on. Use Test voice if playback is blocked.')
   }
 
   const testSpeech = () => {
-    const started = speakText('Voice output is working.', localStorage.getItem('signbridge-voice') || 'en-IN', Number(localStorage.getItem('signbridge-speech-rate') || '1'), {
+    const started = speakText('Voice output is working.', accountStorage.getItem('signbridge-voice') || 'en-IN', Number(accountStorage.getItem('signbridge-speech-rate') || '1'), {
       onStart: () => setSpeechStatus('Voice test is playing.'),
       onEnd: () => setSpeechStatus('Voice test finished.'),
       onError: message => setSpeechStatus(message),
@@ -221,9 +225,54 @@ export default function LiveTranslate() {
     if (!started) setSpeechStatus('Speech output is unavailable in this browser.')
   }
 
+  const exportVocabulary = () => {
+    const payload = { app: 'SignBridge AI', formatVersion: 1, exportedAt: new Date().toISOString(), examples }
+    const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }))
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = 'signbridge-vocabulary.json'
+    anchor.click()
+    URL.revokeObjectURL(url)
+    setStatusMessage('Vocabulary backup downloaded to this device.')
+  }
+
+  const importVocabulary = async (file?: File) => {
+    if (!file) return
+    try {
+      const parsed: unknown = JSON.parse(await file.text())
+      if (!parsed || typeof parsed !== 'object' || !('examples' in parsed)) throw new Error('Choose a SignBridge vocabulary backup file.')
+      const payload = parsed as { examples: unknown }
+      const choice = examples.length ? window.prompt('Import mode: type “merge” to keep your current signs, or “replace” to replace them.', 'merge') : 'replace'
+      if (choice === null) return
+      const mode = choice.trim().toLowerCase()
+      if (mode !== 'merge' && mode !== 'replace') throw new Error('Import cancelled. Enter either “merge” or “replace”.')
+      const next = importSignExamples(payload.examples, mode)
+      setExamples(next)
+      setRecognitionMode('personal')
+      setStatusMessage(`Imported ${next.length} saved examples. Choose My vocabulary to recognize your trained signs.`)
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : 'Could not read this vocabulary backup.')
+    }
+  }
+
+  const checkPractice = () => {
+    if (!practiceTarget) return
+    if (recognitionMode !== 'personal') { setStatusMessage('Switch to My vocabulary before checking a trained-sign practice round.'); return }
+    if (currentSign?.toLocaleLowerCase() === practiceTarget.toLocaleLowerCase()) {
+      const score = practiceScore + 1
+      setPracticeScore(score)
+      accountStorage.setItem('signbridge-live-practice-score', String(score))
+      const choices = eligibleLabels.map(([name]) => name).filter(name => name !== practiceTarget)
+      setPracticeTarget(choices.length ? choices[Math.floor(Math.random() * choices.length)] : practiceTarget)
+      setStatusMessage(`Correct — “${practiceTarget}” matched. ${score} successful round${score === 1 ? '' : 's'} in this browser.`)
+    } else {
+      setStatusMessage(currentSign ? `The current match is “${currentSign}”. Try the target again with a steady hand.` : 'No stable match yet. Keep the sign in frame, then check again.')
+    }
+  }
+
   return (
     <div className="container max-w-7xl py-10">
-      <div className="mb-8 flex flex-col gap-3">
+      <div className="mb-8 flex flex-col gap-3 animate-page-enter signbridge-hero">
         <span className="text-sm font-semibold uppercase tracking-[0.16em] text-primary">Personalized sign workspace</span>
         <h1 className="font-display text-4xl font-bold tracking-tight">Live sign recognition</h1>
         <p className="max-w-3xl text-muted-foreground">Recognize an experimental 11 sign ISL vocabulary or teach personal held signs. A personal sign starts matching after five saved examples. Detection and recognition run in your browser; video and landmarks are not uploaded.</p>
@@ -251,6 +300,11 @@ export default function LiveTranslate() {
         </section>
 
         <aside className="space-y-5">
+          <section className="rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/10 via-card to-accent/10 p-6 shadow-sm">
+            <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-primary">Practice with your own signs</p><h2 className="mt-1 font-display text-xl font-semibold">Live sign challenge</h2></div><span className="rounded-full bg-card px-3 py-1 text-xs font-semibold">{practiceScore} correct</span></div>
+            {eligibleLabels.length ? <><p className="mt-3 text-sm text-muted-foreground">Show the target sign to the camera, then check the stable live match. This practices your personal vocabulary; it does not teach verified ISL forms.</p><div className="mt-4 flex items-center gap-3"><div className="min-w-0 flex-1 rounded-xl bg-card/80 px-4 py-3"><span className="block text-xs text-muted-foreground">Your target</span><strong className="text-xl capitalize">{practiceTarget || 'Choose a round'}</strong></div><button type="button" onClick={() => { const available = eligibleLabels.map(([name]) => name); setPracticeTarget(available[Math.floor(Math.random() * available.length)]); setRecognitionMode('personal') }} className="rounded-xl border border-border bg-card px-4 py-3 text-sm font-semibold">{practiceTarget ? 'New target' : 'Start'}</button><button type="button" onClick={checkPractice} disabled={!practiceTarget} className="rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-50">Check</button></div></> : <p className="mt-3 text-sm text-muted-foreground">Train at least one sign with five examples to unlock a live practice round.</p>}
+          </section>
+
           <section className="rounded-2xl border border-border bg-card p-6">
             <div className="mb-5">
               <p className="text-xs font-semibold uppercase tracking-wider text-primary">Recognition source</p>
@@ -279,8 +333,8 @@ export default function LiveTranslate() {
           </section>
 
           <section className="rounded-2xl border border-border bg-card p-6">
-            <div className="flex items-center justify-between gap-3"><div><h2 className="font-display text-lg font-semibold">Your vocabulary</h2><p className="mt-1 text-sm text-muted-foreground">{eligibleLabels.length} trained label{eligibleLabels.length === 1 ? '' : 's'} · {examples.length} saved examples</p></div><button onClick={resetPersonalModel} disabled={!examples.length} className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:border-destructive/30 hover:bg-destructive/10 hover:text-destructive disabled:opacity-40" aria-label="Delete all personal sign data" title="Delete all personal sign data"><Trash2 className="h-3.5 w-3.5" />Clear all</button></div>
-            {Object.keys(counts).length ? <ul className="mt-4 space-y-3">{Object.entries(counts).map(([name, count]) => <li key={name} className="flex items-center justify-between gap-3 rounded-xl bg-muted/50 px-3 py-2.5 text-sm"><div className="min-w-0"><span className="font-medium">{name}</span><p className={count >= MIN_EXAMPLES_PER_SIGN ? 'mt-0.5 text-xs text-success' : 'mt-0.5 text-xs text-muted-foreground'}>{count}/{MIN_EXAMPLES_PER_SIGN} examples{count >= MIN_EXAMPLES_PER_SIGN ? ' · ready' : ' · needs more'}</p></div><button type="button" onClick={() => deleteOneSign(name)} aria-label={`Delete trained sign ${name}`} title={`Delete ${name} and retrain it`} className="shrink-0 rounded-lg border border-border p-2 text-muted-foreground transition hover:border-destructive/30 hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"><Trash2 className="h-4 w-4" /></button></li>)}</ul> : <p className="mt-4 rounded-xl bg-muted/50 p-4 text-sm text-muted-foreground">No personal signs saved yet.</p>}
+            <div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={exportVocabulary} disabled={!examples.length} className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-semibold hover:bg-muted disabled:opacity-40"><Download className="h-3.5 w-3.5" />Back up</button><label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-semibold hover:bg-muted"><Upload className="h-3.5 w-3.5" />Restore<input type="file" accept="application/json,.json" className="sr-only" onChange={event => { void importVocabulary(event.target.files?.[0]); event.currentTarget.value = '' }} /></label><button type="button" onClick={resetPersonalModel} disabled={!examples.length} className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:border-destructive/30 hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" />Clear all</button></div>
+            {Object.keys(counts).length ? <ul className="mt-4 space-y-3">{Object.entries(counts).map(([name, count]) => { const signSamples = examples.filter(item => item.label.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase() === name); return <li key={name} className="rounded-xl bg-muted/50 px-3 py-2.5 text-sm"><div className="flex items-center justify-between gap-3"><button type="button" onClick={() => setExpandedSign(expandedSign === name ? null : name)} className="min-w-0 flex-1 text-left"><span className="font-medium">{name}</span><p className={count >= MIN_EXAMPLES_PER_SIGN ? 'mt-0.5 text-xs text-success' : 'mt-0.5 text-xs text-muted-foreground'}>{count}/{MIN_EXAMPLES_PER_SIGN} examples{count >= MIN_EXAMPLES_PER_SIGN ? ' · ready' : ' · needs more'} · {expandedSign === name ? 'hide recordings' : 'manage recordings'}</p></button><button type="button" onClick={() => { const renamed = window.prompt(`Rename “${name}” to:`, name); if (!renamed || renamed === name) return; try { setExamples(renameSignExamples(name, renamed)); setStatusMessage(`Renamed “${name}” to “${renamed.trim()}”.`) } catch (error) { setStatusMessage(error instanceof Error ? error.message : 'Could not rename this sign.') } }} aria-label={`Rename sign ${name}`} title={`Rename ${name}`} className="shrink-0 rounded-lg border border-border px-2.5 py-2 text-xs font-semibold text-muted-foreground hover:bg-card">Rename</button><button type="button" onClick={() => deleteOneSign(name)} aria-label={`Delete trained sign ${name}`} title={`Delete ${name} and retrain it`} className="shrink-0 rounded-lg border border-border p-2 text-muted-foreground transition hover:border-destructive/30 hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"><Trash2 className="h-4 w-4" /></button></div>{expandedSign === name && <div className="mt-3 space-y-2 border-t border-border/70 pt-3">{signSamples.map((sample, index) => <div key={`${sample.createdAt}-${index}`} className="flex items-center justify-between gap-3 rounded-lg bg-card px-3 py-2 text-xs"><span>Recording {index + 1} <span className="text-muted-foreground">· {new Date(sample.createdAt).toLocaleString()}</span></span><button type="button" onClick={() => { if (!window.confirm(`Delete recording ${index + 1} for “${name}”?`)) return; try { setExamples(deleteSignExample(name, index)); setStatusMessage(`Recording removed. “${name}” has ${Math.max(count - 1, 0)} examples remaining.`) } catch (error) { setStatusMessage(error instanceof Error ? error.message : 'Could not remove this recording.') } }} className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" aria-label={`Delete recording ${index + 1} for ${name}`}><Trash2 className="h-3.5 w-3.5" /></button></div>)}</div>}</li> })}</ul> : <p className="mt-4 rounded-xl bg-muted/50 p-4 text-sm text-muted-foreground">No personal signs saved yet.</p>}
             <p className="mt-4 text-xs leading-5 text-muted-foreground">This classifier recognizes only the labels you teach. It does not understand ISL grammar, moving signs, facial expression, or conversation context.</p>
           </section>
         </aside>

@@ -15,6 +15,7 @@ const navItems = [
   { path: '/conversation', label: 'Live Studio' },
   { path: '/learn', label: 'Learn ISL' },
   { path: '/hub', label: 'Text & speech' },
+  { path: '/accessibility', label: 'Emergency words' },
 ]
 
 export default function Layout() {

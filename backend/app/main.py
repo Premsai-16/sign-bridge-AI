@@ -4,6 +4,8 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy import inspect, text
 from .database import engine
 from .models import Base
@@ -49,6 +51,10 @@ app.include_router(account.router)
 
 @app.get("/")
 async def root():
+    frontend = os.getenv("FRONTEND_DIST")
+    if frontend:
+        from fastapi.responses import FileResponse
+        return FileResponse(Path(frontend) / "index.html")
     return {"message": "SignBridge AI API", "version": app.version}
 
 @app.get("/health")
@@ -82,3 +88,17 @@ async def list_models():
             }
         ]
     }
+
+# Mount last so API and health routes keep their JSON behavior. Client routes
+# return the SPA entry point; missing assets/API paths must remain real 404s.
+class FrontendFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as error:
+            if error.status_code != 404 or path.startswith(("api/", "assets/", "audio/", "lessons/")) or "." in path or scope["method"] not in ("GET", "HEAD"):
+                raise
+            return await super().get_response("index.html", scope)
+
+if os.getenv("FRONTEND_DIST"):
+    app.mount("/", FrontendFiles(directory=os.environ["FRONTEND_DIST"], html=True), name="frontend")

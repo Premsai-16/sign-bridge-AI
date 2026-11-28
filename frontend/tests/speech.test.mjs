@@ -93,3 +93,18 @@ test('new native-language text is not sent for English-to-target translation aga
   assert.equal(utterances[0].text,'நான் இன்று வருகிறேன்')
  } finally {globalThis.fetch=originalFetch}
 })
+
+test('camera gesture unlocks one reusable player for successive recognized phrases',async()=>{
+ speech.enableSpeechPlayback()
+ const player=players[0]
+ assert.equal(player.src,'/audio/silence.wav')
+ await new Promise(resolve=>setImmediate(resolve))
+ speech.speakText('hello','en-IN',1,{translate:false})
+ assert.equal(players.length,1)
+ assert.equal(player.src,'/audio/en-IN/hello.wav')
+ player.onended()
+ speech.speakText('water','en-IN',1,{translate:false})
+ assert.equal(players.length,1)
+ assert.equal(player.src,'/audio/en-IN/water.wav')
+ assert.equal(player.volume,1)
+})

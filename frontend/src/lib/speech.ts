@@ -14,6 +14,30 @@ let jobs: SpeechJob[] = []
 let busy = false
 let generation = 0
 let audio: HTMLAudioElement | null = null
+let reusableAudio: HTMLAudioElement | null = null
+let playbackUnlocked = false
+let unlocking = false
+// Call synchronously from a tap, before camera permissions/network awaits.
+// Reusing this media element preserves the gesture grant on mobile Safari.
+export function enableSpeechPlayback() {
+  window.speechSynthesis?.resume()
+  if (playbackUnlocked || unlocking || busy) return
+  reusableAudio ||= new Audio('/audio/silence.wav')
+  reusableAudio.setAttribute?.('playsinline', '')
+  reusableAudio.volume = 0
+  unlocking = true
+  const player = reusableAudio
+  void player.play().then(() => {
+    playbackUnlocked = true
+    if (audio !== player) { player.pause(); player.currentTime = 0 }
+  }).catch(() => { playbackUnlocked = false }).finally(() => { unlocking = false })
+  // Unlock device speech in the same gesture without an audible greeting.
+  if (window.speechSynthesis && typeof SpeechSynthesisUtterance !== 'undefined') {
+    const primer = new SpeechSynthesisUtterance(' ')
+    primer.volume = 0
+    window.speechSynthesis.speak(primer)
+  }
+}
 let activeJob: SpeechJob | null = null
 let currentUtterance: SpeechSynthesisUtterance | null = null
 let lastSpeech: { text: string; language: string } | null = null
@@ -81,16 +105,16 @@ async function playNext() {
   notify('translated', job)
   const recording = fallbackUrl(job.text, job.language)
   if (recording) {
-    audio = new Audio(recording); audio.controls = true
+    audio = reusableAudio || new Audio(recording); audio.src = recording; audio.controls = true
     if (typeof document !== 'undefined') { const host = document.getElementById('signbridge-audio-preview'); if (host) host.replaceChildren(audio) }
     audio.playbackRate = job.rate; audio.volume = job.volume
     audio.onplaying = started; audio.onended = () => finish()
     audio.onerror = () => finish('The phrase audio could not load. Refresh the page and try Test greeting.')
-    try { await audio.play() } catch { finish('Audio was blocked. Press Test greeting to enable playback, then try again.') }
+    try { await audio.play() } catch { playbackUnlocked = false; finish('Your browser blocked audio. Tap Replay or a phrase to enable sound, then try again.') }
     return
   }
   if (!window.speechSynthesis) { finish('This browser does not support device speech. Common phrase recordings are still available.'); return }
-  await waitForVoices()
+  if (!window.speechSynthesis.getVoices().length) await waitForVoices()
   if (token !== generation) return
   const voices = window.speechSynthesis.getVoices()
   const languageBase = locale(job.language).split('-')[0]

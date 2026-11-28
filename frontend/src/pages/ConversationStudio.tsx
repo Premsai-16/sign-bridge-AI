@@ -31,7 +31,7 @@ import { useCamera } from '../hooks/useCamera'
 import { useMediaPipe } from '../hooks/useMediaPipe'
 import CommunicationToolkit from '../components/CommunicationToolkit'
 import HandOverlay from '../components/HandOverlay'
-import { speakText, stopSpeech } from '../lib/speech'
+import { speakText, stopSpeech, enableSpeechPlayback } from '../lib/speech'
 import { ownerApi, predictSharedSequence, predictSharedSign, type SharedModel } from '../lib/api'
 import { saveSession } from '../lib/sessions'
 import {
@@ -473,6 +473,7 @@ export default function ConversationStudio() {
       }
       stop()
     } else {
+      enableSpeechPlayback()
       void start(facingMode)
     }
   }

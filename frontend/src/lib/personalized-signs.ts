@@ -160,6 +160,8 @@ export function renameSignExamples(label: string, nextLabel: string): SignExampl
 export function exampleCounts(examples: SignExample[]): Record<string, number> {
   const counts: Record<string, number> = {}
   for (const example of examples) {
+    if (!Array.isArray(example.features) || example.features.length !== 126 || example.features.some(value => !Number.isFinite(value))) continue
+    if (example.frames && (example.frames.length !== TEMPORAL_FRAMES || example.frames.some(frame => !Array.isArray(frame) || frame.length !== 126 || frame.some(value => !Number.isFinite(value))))) continue
     const key = canonicalLabel(example.label)
     counts[key] = (counts[key] || 0) + 1
   }
@@ -221,6 +223,8 @@ export function predictPersonalSign(
   if (!examples || examples.length === 0) return null
 
   const isSequence = Array.isArray(input[0])
+  const observedFrames = isSequence ? input as number[][] : [input as number[]]
+  if (!observedFrames.length || observedFrames.some(frame => !Array.isArray(frame) || frame.length !== 126 || frame.some(value => !Number.isFinite(value)))) return null
   const currentSequence = isSequence ? resampleSequence(input as number[][]) : null
   const currentFeatures = isSequence
     ? Array.from({ length: 126 }, (_, index) =>
@@ -235,6 +239,8 @@ export function predictPersonalSign(
   // Group templates by canonical label
   const grouped = new Map<string, { label: string; distances: number[] }>()
   for (const example of examples) {
+    if (!Array.isArray(example.features) || example.features.length !== 126 || example.features.some(value => !Number.isFinite(value))) continue
+    if (example.frames && (example.frames.length !== TEMPORAL_FRAMES || example.frames.some(frame => !Array.isArray(frame) || frame.length !== 126 || frame.some(value => !Number.isFinite(value))))) continue
     const key = canonicalLabel(example.label)
     if (!grouped.has(key)) {
       grouped.set(key, { label: example.label, distances: [] })
@@ -268,8 +274,9 @@ export function predictPersonalSign(
   if (!best || best.distance > MAX_MATCH_DISTANCE) return null
 
   const second = candidates[1]
-  const margin = second ? Math.max(0, 1 - best.distance / Math.max(second.distance, 1e-6)) : 1.0
-  const confidence = Math.max(0.65, Math.min(0.99, 1 - best.distance / MAX_MATCH_DISTANCE))
+  const margin = second ? Math.max(0, (second.distance - best.distance) / Math.max(second.distance, 1e-6)) : 1.0
+  if (second && margin < 0.16) return null
+  const confidence = Math.max(0, Math.min(0.99, 1 - best.distance / MAX_MATCH_DISTANCE))
 
   return { label: best.label, confidence, margin }
 }

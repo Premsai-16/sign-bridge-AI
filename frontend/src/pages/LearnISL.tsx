@@ -1,6 +1,8 @@
+import LocalizedNavLabel from '../components/LocalizedNavLabel'
+import AlphabetPractice from '../components/AlphabetPractice'
 import { accountStorage } from '../lib/account'
 import OfficialLesson from '../components/OfficialLesson'
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useMemo } from 'react'
 import {
   Camera,
   CheckCircle2,
@@ -125,62 +127,34 @@ export default function LearnISL() {
   const [xp, setXp] = useState(() => Number(accountStorage.getItem('signbridge-xp') || '0'))
   const [showCelebration, setShowCelebration] = useState(false)
 
-  const { isActive, start, stop, videoRef } = useCamera()
+  const { isActive, isLoading, error: cameraError, start, stop, videoRef } = useCamera()
+  const [videoSize, setVideoSize] = useState({ width: 1280, height: 720 })
   const detector = useMediaPipe(videoRef, isActive)
 
   const currentSign = PRACTICE_SIGNS[currentSignIndex] || PRACTICE_SIGNS[0]
   const accuracy = useMemo(() => {
     if (!isActive || !detector.rawHands.length) return 0
     const geom = detector.geometricPrediction
-    if (!geom) return 15
+    if (!geom) return 0
     const predicted = geom.label.toLowerCase()
     const target = currentSign.targetKey.toLowerCase()
     return predicted.includes(target) || target.includes(predicted.split('/')[0].trim())
       ? Math.round(geom.confidence * 100)
-      : 20
+      : 0
   }, [currentSign.targetKey, detector.geometricPrediction, detector.rawHands.length, isActive])
-  const holdTimerRef = useRef<number>(0)
-
-  // Real-time gesture matching
-  useEffect(() => {
-    if (!isActive || !detector.rawHands.length) {
-      holdTimerRef.current = 0
-      return
-    }
-
-    // If matching >= 80% for 1 second, celebrate and mark mastered
-    if (accuracy >= 80) {
-      holdTimerRef.current += 1
-      if (holdTimerRef.current >= 12) {
-        // approx 1 second of stable recognition
-        if (!masteredIds.includes(currentSign.id)) {
-          const nextMastered = [...masteredIds, currentSign.id]
-          setMasteredIds(nextMastered)
-          accountStorage.setItem('signbridge-mastered-signs', JSON.stringify(nextMastered))
-
-          const nextXp = xp + 50
-          setXp(nextXp)
-          accountStorage.setItem('signbridge-xp', String(nextXp))
-
-          setShowCelebration(true)
-          speakText(`Practice complete: ${currentSign.label}`, 'en-IN', 1.0)
-
-          setTimeout(() => {
-            setShowCelebration(false)
-            if (currentSignIndex < PRACTICE_SIGNS.length - 1) {
-              setCurrentSignIndex(prev => prev + 1)
-            }
-          }, 2400)
-        }
-      }
-    } else {
-      holdTimerRef.current = 0
-    }
-  }, [accuracy, detector.rawHands, isActive, currentSign, masteredIds, currentSignIndex, xp])
+  function completePractice() {
+    if (masteredIds.includes(currentSign.id)) return
+    const next = [...masteredIds, currentSign.id]
+    setMasteredIds(next)
+    accountStorage.setItem('signbridge-mastered-signs', JSON.stringify(next))
+    setXp(xp + 50)
+    accountStorage.setItem('signbridge-xp', String(xp + 50))
+    setShowCelebration(true)
+  }
 
   const handleSelectSign = (index: number) => {
     setCurrentSignIndex(index)
-    holdTimerRef.current = 0
+    setShowCelebration(false)
     speakText(PRACTICE_SIGNS[index].label.split('/')[0], 'en-IN', 1.0)
   }
 
@@ -194,7 +168,7 @@ export default function LearnISL() {
             <span>ISL Learning Studio</span>
           </div>
           <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">
-            Learn Indian Sign Language
+            <LocalizedNavLabel label="Learn Indian Sign Language"/>
           </h1>
           <p className="mt-1 text-muted-foreground text-sm sm:text-base max-w-2xl">
             Interactive visual guides, fingerspelling dictionaries, and live camera-powered AI practice
@@ -203,7 +177,7 @@ export default function LearnISL() {
         </div>
 
         {/* Gamification Badges */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 rounded-2xl border border-border bg-card px-4 py-2.5 shadow-sm">
             <Flame className="h-5 w-5 text-amber-500 animate-pulse" />
             <div>
@@ -233,21 +207,22 @@ export default function LearnISL() {
       {/* Tabs */}
       <div className="mb-8 flex border-b border-border overflow-x-auto gap-4">
         {[
-          { id: 'practice', label: 'Camera Practice Studio' },
+          { id: 'practice', label: 'Camera pose practice' },
           { id: 'alphabet', label: 'ISL Alphabet (A-Z)' },
           { id: 'numbers', label: 'Numbers (0–9)' },
           { id: 'phrases', label: 'Conversational Signs' },
         ].map(tab => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id as any)}
+            onClick={() => { stop(); setShowCelebration(false); setActiveTab(tab.id as typeof activeTab) }}
+            aria-pressed={activeTab === tab.id}
             className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${
               activeTab === tab.id
                 ? 'border-primary text-primary'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
           >
-            {tab.label}
+            <LocalizedNavLabel label={tab.label}/>
           </button>
         ))}
       </div>
@@ -286,6 +261,7 @@ export default function LearnISL() {
                 </button>
               ) : (
                 <button
+                  disabled={isLoading}
                   onClick={() => start('user')}
                   className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition shadow-sm"
                 >
@@ -296,10 +272,11 @@ export default function LearnISL() {
             </div>
 
             {/* Video Feed with Overlay */}
-            <div className="relative aspect-video w-full bg-black flex items-center justify-center overflow-hidden">
+            <div className="relative aspect-[3/4] sm:aspect-video w-full bg-black flex items-center justify-center overflow-hidden">
               <video
                 ref={videoRef}
-                className="h-full w-full object-cover transform -scale-x-100"
+                className="h-full w-full object-contain transform -scale-x-100"
+                onLoadedMetadata={event => setVideoSize({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })}
                 playsInline
                 muted
               />
@@ -311,6 +288,9 @@ export default function LearnISL() {
                   activeSign={detector.geometricPrediction?.label}
                   confidence={detector.geometricPrediction?.confidence}
                   mirrored={true}
+                  sourceWidth={videoSize.width}
+                  sourceHeight={videoSize.height}
+                  showLabel={false}
                 />
               )}
 
@@ -326,7 +306,8 @@ export default function LearnISL() {
                     pose and receive experimental shape feedback.
                   </p>
                   <button
-                    onClick={() => start('user')}
+                    disabled={isLoading}
+                  onClick={() => start('user')}
                     className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-primary to-secondary px-6 py-3 text-sm font-semibold text-primary-foreground hover:opacity-95 shadow-lg transition"
                   >
                     <Video className="h-4 w-4" />
@@ -345,17 +326,18 @@ export default function LearnISL() {
                     Practised: {currentSign.label}
                   </h2>
                   <p className="text-emerald-200 text-sm font-medium mb-3">+50 XP Awarded</p>
-                  <span className="text-xs text-emerald-300">Proceeding to next sign...</span>
+                  <button className="action-secondary mt-3" onClick={() => setShowCelebration(false)}>Continue practising</button>
                 </div>
               )}
             </div>
 
-            {/* Target Match Accuracy Meter */}
+            {cameraError && <p role="alert" className="p-4 text-destructive">{cameraError}</p>}
+            {/* Experimental detector feedback */}
             <div className="border-t border-border bg-card p-5">
               <div className="flex items-center justify-between text-xs font-semibold mb-2">
                 <span className="text-muted-foreground">Match with Target: {currentSign.label}</span>
                 <span className={accuracy >= 80 ? 'text-emerald-500' : 'text-primary'}>
-                  {accuracy}% pose match
+                  {accuracy > 0 ? `${accuracy}% detector confidence` : 'No matching pose'}
                 </span>
               </div>
               <div className="h-3 w-full rounded-full bg-muted overflow-hidden">
@@ -369,7 +351,7 @@ export default function LearnISL() {
                 />
               </div>
               <p className="text-xs text-muted-foreground mt-2">
-                Hold the pose above 80% for 1 second to master this sign!
+                Experimental shape feedback only. Compare with an official reference; this score does not measure ISL correctness.
               </p>
             </div>
           </div>
@@ -385,7 +367,7 @@ export default function LearnISL() {
                 <button
                   onClick={() => speakText(currentSign.label, 'en-IN', 1.0)}
                   className="rounded-full bg-background p-2 border border-border text-muted-foreground hover:text-primary transition"
-                  title="Pronounce"
+                  title="Pronounce" aria-label={`Pronounce ${currentSign.label}`}
                 >
                   <Volume2 className="h-4 w-4" />
                 </button>
@@ -405,6 +387,7 @@ export default function LearnISL() {
                 </div>
               </div>
 
+              <button className="action-primary mb-4 w-full" disabled={masteredIds.includes(currentSign.id)} onClick={completePractice}>{masteredIds.includes(currentSign.id) ? 'Practice saved' : 'Mark as practised · self-check'}</button>
               <div className="flex gap-2">
                 <button
                   disabled={currentSignIndex === 0}
@@ -425,7 +408,7 @@ export default function LearnISL() {
 
             {/* Practice Playlist Queue */}
             <div className="rounded-3xl border border-border bg-card p-6 shadow-sm">
-              <h3 className="font-display text-lg font-bold mb-3">Lesson Signs</h3>
+              <h3 className="font-display text-lg font-bold mb-3">Experimental pose examples</h3><p className="mb-3 text-sm text-muted-foreground">These shapes test camera tracking. They are not a validated ISL alphabet or phrase dictionary.</p>
               <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
                 {PRACTICE_SIGNS.map((item, idx) => {
                   const isCurrent = idx === currentSignIndex
@@ -469,17 +452,17 @@ export default function LearnISL() {
       )}
 
       {/* Tab 2: Alphabet Fingerspelling Chart */}
-      {activeTab === 'alphabet' && <OfficialLesson key="alphabet" kind="alphabet" />}
-      {activeTab === 'numbers' && <OfficialLesson key="numbers" kind="numbers" />}
+      {activeTab === 'alphabet' && <><OfficialLesson key="alphabet" kind="alphabet" /><AlphabetPractice key="alphabet-practice" /></>}
+      {activeTab === 'numbers' && <><OfficialLesson key="numbers" kind="numbers" /><AlphabetPractice key="number-practice" kind="numbers" /></>}
 
 
       {/* Tab 4: Conversational Signs */}
       {activeTab === 'phrases' && (
         <div>
           <div className="mb-6">
-            <h2 className="font-display text-2xl font-bold">Everyday Conversational Signs</h2>
+            <h2 className="font-display text-2xl font-bold">Everyday gesture examples</h2>
             <p className="text-sm text-muted-foreground mt-1">
-              Essential expressions for daily communication, greetings, and emergency needs.
+              These introductory gesture descriptions are not verified ISL lessons. Use the official alphabet and number references for learning, and the owner-trained vocabulary for conversation.
             </p>
           </div>
 
@@ -550,6 +533,7 @@ export default function LearnISL() {
                       {item.category}
                     </span>
                     <button
+                      aria-label={`Pronounce ${item.title}`}
                       onClick={() => speakText(item.title, 'en-IN', 1.0)}
                       className="text-muted-foreground hover:text-primary transition"
                     >
@@ -563,15 +547,18 @@ export default function LearnISL() {
 
                 <button
                   onClick={() => {
+                    stop()
+                    setShowCelebration(false)
                     setActiveTab('practice')
                     const matching = PRACTICE_SIGNS.findIndex(s =>
                       s.label.toLowerCase().includes(item.title.toLowerCase().split('/')[0].trim())
                     )
                     if (matching !== -1) setCurrentSignIndex(matching)
                   }}
-                  className="mt-4 inline-flex items-center justify-center gap-1.5 rounded-xl border border-border py-2 text-xs font-semibold text-primary hover:bg-primary/10 transition"
+                  disabled={!PRACTICE_SIGNS.some(sign => sign.label.toLowerCase().includes(item.title.toLowerCase().split('/')[0].trim()))}
+                  className="disabled:opacity-40 mt-4 inline-flex items-center justify-center gap-1.5 rounded-xl border border-border py-2 text-xs font-semibold text-primary hover:bg-primary/10 transition"
                 >
-                  Practice in Camera
+                  {PRACTICE_SIGNS.some(sign => sign.label.toLowerCase().includes(item.title.toLowerCase().split('/')[0].trim())) ? 'Practice camera pose' : 'Camera example unavailable'}
                   <ArrowRight className="h-3 w-3" />
                 </button>
               </div>

@@ -25,3 +25,27 @@ Sources:
 https://supabase.com/docs/reference/javascript/auth-signinwithotp
 https://supabase.com/docs/reference/javascript/auth-signinwithoauth
 https://supabase.com/docs/guides/auth/phone-login
+
+## Required email verification flow
+
+The main login form now uses a single email → OTP → verified session flow for both
+new and returning users. It does not issue a SignBridge account session before
+Supabase verifies the code. The owner portal remains a separate password flow.
+Both historical local registration/login APIs reject user password sign-in;
+previous unverified local account sessions cannot access account saves. Existing
+local data is retained, but is not automatically linked to an email identity.
+Do not link legacy accounts by an unverified username or email.
+
+Both Supabase email templates (Confirm sign up and Magic link or OTP) must include
+`{{ .Token }}`. These were configured in the project dashboard. Delivery is a
+separate requirement: the observed `535 5.7.8 Authentication failed` means the
+SMTP server rejected the credentials. Brevo showed no generated SMTP key during
+inspection. Generate an SMTP key in Brevo and enter it directly in Supabase's
+SMTP Password field, using the displayed SMTP Login (not the account password or
+an API key). Host is `smtp-relay.brevo.com`, port `587`.
+
+Brevo also displays an authorized-IP restriction for SMTP keys. If a correctly
+configured key is still rejected, inspect Brevo's blocked connection events and
+authorize only the necessary sending infrastructure; do not disable protections
+as a workaround. Confirm the sender is verified, then test both first-time signup
+and returning-user OTP delivery. Until that succeeds, delivery is not verified.

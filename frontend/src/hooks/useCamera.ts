@@ -16,24 +16,33 @@ export function useCamera() {
     stream: null,
   })
   const videoRef = useRef<HTMLVideoElement>(null)
+  const requestRef = useRef(0)
   const streamRef = useRef<MediaStream | null>(null)
 
   useEffect(() => {
     const video = videoRef.current
     const stream = state.stream
-    if (!video || !stream) return
+    if (!video) return
     video.srcObject = stream
+    if (!stream) return
     void video.play().catch(() => {
+      if (streamRef.current !== stream) return
+      stream.getTracks().forEach(track => { track.onended = null; track.stop() })
+      streamRef.current = null
       setState(current => ({
         ...current,
         isActive: false,
+        stream: null,
         error: 'The camera opened, but the video preview could not start. Check browser permissions and try again.',
       }))
     })
   }, [state.stream])
 
   const start = useCallback(async (facingMode: 'user' | 'environment' = 'user'): Promise<boolean> => {
-    setState(s => ({ ...s, isLoading: true, error: null }))
+    const request = ++requestRef.current
+    streamRef.current?.getTracks().forEach(track => { track.onended = null; track.stop() })
+    streamRef.current = null
+    setState({ isActive: false, isLoading: true, error: null, stream: null })
 
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -51,7 +60,7 @@ export function useCamera() {
         audio: false,
       })
 
-      streamRef.current?.getTracks().forEach(track => track.stop())
+      if (request !== requestRef.current) { stream.getTracks().forEach(track => track.stop()); return false }
       streamRef.current = stream
       stream.getVideoTracks().forEach(track => { track.onended = () => {
         if (streamRef.current !== stream) return
@@ -67,6 +76,7 @@ export function useCamera() {
       })
       return true
     } catch (err) {
+      if (request !== requestRef.current) return false
       setState({
         isActive: false,
         isLoading: false,
@@ -82,6 +92,7 @@ export function useCamera() {
   }, [])
 
   const stop = useCallback(() => {
+    requestRef.current += 1
     streamRef.current?.getTracks().forEach(track => track.stop())
     streamRef.current = null
     if (videoRef.current) {

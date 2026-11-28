@@ -9,7 +9,8 @@ import {
   CheckCircle2,
   ArrowRight,
 } from 'lucide-react'
-import SignAvatarCanvas, { PRESET_SIGNS } from '../components/SignAvatarCanvas'
+import SignAvatarCanvas from '../components/SignAvatarCanvas'
+import { PRESET_SIGNS } from '../components/avatarPoses'
 import { speakText } from '../lib/speech'
 
 export default function AISignAvatar() {

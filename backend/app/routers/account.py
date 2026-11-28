@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import String, Integer, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, Session
 from ..models import Base, User
-from .auth import get_db, hash_password, verify_password, active_sessions, SESSION_DURATION_HOURS
+from .auth import get_db, hash_password, active_sessions, issue_owner_session, revoke_owner_session
 
 class AccountSession(Base):
     __tablename__ = 'account_sessions'
@@ -47,7 +47,7 @@ def current_user(credentials: HTTPAuthorizationCredentials = Depends(security), 
     if not session or session.expires_at < datetime.now(UTC).replace(tzinfo=None):
         raise HTTPException(401, 'Please sign in again.')
     user = db.get(User, session.user_id)
-    if not user or not user.is_active:
+    if not user or not user.is_active or not user.username.startswith('supabase:'):
         raise HTTPException(401, 'Account unavailable.')
     return user
 
@@ -59,24 +59,15 @@ def issue(user, db):
 
 @router.post('/register', dependencies=[Depends(throttle)])
 def register(body: Credentials, db: Session = Depends(get_db)):
-    if body.username == os.getenv('ADMIN_USERNAME') or db.query(User).filter(User.username == body.username).first():
-        raise HTTPException(409, 'Choose another username.')
-    user = User(username=body.username, password_hash=hash_password(body.password))
-    db.add(user)
-    db.commit()
-    return issue(user, db)
+    raise HTTPException(403, 'Verify your email with a one-time code to create an account.')
 
 @router.post('/login', dependencies=[Depends(throttle)])
 def login(body: Credentials, db: Session = Depends(get_db)):
     owner_name, owner_password = os.getenv('ADMIN_USERNAME'), os.getenv('ADMIN_PASSWORD')
     if owner_name and owner_password and secrets.compare_digest(body.username, owner_name) and secrets.compare_digest(body.password.encode(), owner_password.encode()):
-        token = secrets.token_urlsafe(32)
-        active_sessions[token] = {'username': owner_name, 'role': 'admin', 'expires_at': datetime.now(UTC) + timedelta(hours=SESSION_DURATION_HOURS)}
+        token = issue_owner_session(owner_name, db)
         return {'access_token': token, 'username': owner_name, 'role': 'owner'}
-    user = db.query(User).filter(User.username == body.username).first()
-    if not user or not user.is_active or not verify_password(body.password, user.password_hash):
-        raise HTTPException(401, 'Incorrect username or password.')
-    return issue(user, db)
+    raise HTTPException(401, 'Use email verification to sign in. Password sign-in is reserved for the owner.')
 
 @router.get('/me')
 def me(user: User = Depends(current_user)):
@@ -90,6 +81,8 @@ def saves(user: User = Depends(current_user)):
 def save(body: Saves, user: User = Depends(current_user), db: Session = Depends(get_db)):
     if len(body.values) > 100 or any(not key.startswith('signbridge-') or len(key)>120 for key in body.values):
         raise HTTPException(422, 'Invalid save keys.')
+    # Serialize concurrent saves for the same account on PostgreSQL.
+    user = db.query(User).filter(User.id == user.id).populate_existing().with_for_update().one()
     values = json.loads(user.preferences or '{}')
     for key, value in body.values.items():
         if value is None:
@@ -109,6 +102,7 @@ def logout(credentials: HTTPAuthorizationCredentials = Depends(security), db: Se
     if session:
         db.delete(session)
         db.commit()
+    revoke_owner_session(credentials.credentials, db)
     active_sessions.pop(credentials.credentials, None)
     return {'signed_out': True}
 

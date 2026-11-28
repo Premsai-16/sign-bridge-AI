@@ -98,14 +98,19 @@ export default function AccessibilityNetwork() {
   const activeData = SCENARIOS.find(s => s.id === selectedScenario) || SCENARIOS[0]
 
   useEffect(() => {
-    let active = true
-    setTranslated({})
+    if (language === 'en-IN' || language === 'hi-IN') return
+    const lifecycle = { active: true }
     for (const phrase of activeData.phrases) {
-      if (language === 'en-IN' || language === 'hi-IN') { setTranslated(previous => ({...previous,[phrase.id]:language === 'hi-IN' ? phrase.hindi : phrase.text})); continue }
-      void translateAutomatically(phrase.text,language).then(text => { if(active) setTranslated(previous => ({...previous,[phrase.id]:text})) }).catch(() => {if(active) setTranslated(previous=>({...previous,[phrase.id]:'Translation unavailable. English remains above.'}))})
+      const key = `${language}:${phrase.id}`
+      void translateAutomatically(phrase.text,language)
+        .then(text => { if(lifecycle.active) setTranslated(previous => ({...previous,[key]:text})) })
+        .catch(() => { if(lifecycle.active) setTranslated(previous => ({...previous,[key]:'Translation unavailable. English remains above.'})) })
     }
-    return () => {active=false}
-  }, [language,selectedScenario])
+    return () => { lifecycle.active = false }
+  }, [language,activeData.phrases])
+  const phraseTranslation = (phrase: PhraseCard) => language === 'en-IN' ? phrase.text
+    : language === 'hi-IN' ? phrase.hindi
+    : translated[`${language}:${phrase.id}`] || 'Translating…'
   const handleSpeak = (phrase: PhraseCard) => {
     setLastSpokenText(phrase.text)
     speakText(phrase.text, language, 0.95)
@@ -238,7 +243,7 @@ export default function AccessibilityNetwork() {
                 <p className="font-display font-semibold text-base sm:text-lg text-foreground leading-snug mb-2">
                   {phrase.text}
                 </p>
-                <p className="text-xs sm:text-sm font-medium text-secondary">{translated[phrase.id] || 'Translating…'}</p>
+                <p className="text-xs sm:text-sm font-medium text-secondary">{phraseTranslation(phrase)}</p>
               </div>
 
               <div className="mt-5 flex gap-2 pt-3 border-t border-border/60">
@@ -285,7 +290,7 @@ export default function AccessibilityNetwork() {
             </h2>
 
             <p className="font-display text-2xl sm:text-4xl font-bold text-amber-300">
-              {translated[fullscreenPhrase.id] || 'Translating…'}
+              {phraseTranslation(fullscreenPhrase)}
             </p>
 
             <div className="pt-8 flex flex-wrap justify-center gap-4">

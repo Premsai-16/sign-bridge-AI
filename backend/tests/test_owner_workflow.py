@@ -38,6 +38,7 @@ def test_owner_video_publish_and_delete(monkeypatch, tmp_path):
     for example_id in ids:
         assert client.delete(f'/api/v1/owner/examples/{example_id}', headers=headers).status_code == 200
     assert not list((tmp_path / 'clips').iterdir())
+    client.post('/api/v1/auth/logout', headers=headers)
     active_sessions.clear()
 
 
@@ -61,3 +62,26 @@ def test_translation_rejects_wrong_script(monkeypatch):
     result = client.post('/api/v1/translation', json={'text':'love','source':'en','target':'ta','consent':True})
     assert result.status_code == 502
     assert 'selected language' in result.json()['detail']
+
+
+def test_recording_retry_returns_same_example(monkeypatch, tmp_path):
+    import uuid
+    monkeypatch.setenv('OWNER_VIDEO_DIR', str(tmp_path / 'clips'))
+    monkeypatch.setenv('ADMIN_USERNAME', 'retry-owner')
+    monkeypatch.setenv('ADMIN_PASSWORD', 'retry-password')
+    token = client.post('/api/v1/auth/admin/login', json={'username':'retry-owner','password':'retry-password'}).json()['access_token']
+    headers = {'Authorization': 'Bearer ' + token}
+    data = {'label': 'retry-sign', 'frames_json': json.dumps([[0.1] * 126] * 12),
+            'consented': 'true', 'participant_code': 'S01', 'dataset_split': 'train',
+            'upload_id': str(uuid.uuid4())}
+    files = {'video': ('sample.webm', b'\x1a\x45\xdf\xa3' + b'x' * 2048, 'video/webm')}
+    try:
+        first = client.post('/api/v1/owner/examples', headers=headers, data=data, files=files)
+        assert first.status_code == 200, first.text
+        second = client.post('/api/v1/owner/examples', headers=headers, data=data, files=files)
+        assert second.status_code == 200, second.text
+        assert second.json()['id'] == first.json()['id']
+        assert len(list((tmp_path / 'clips').iterdir())) == 1
+        assert client.delete(f"/api/v1/owner/examples/{first.json()['id']}", headers=headers).status_code == 200
+    finally:
+        client.post('/api/v1/auth/logout', headers=headers)

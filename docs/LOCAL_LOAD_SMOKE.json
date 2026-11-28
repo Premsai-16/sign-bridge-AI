@@ -1,0 +1,16 @@
+{
+  "scope": "Local read-only HTTP smoke; synthetic model; excludes login, saves, camera, speech, uploads and external translation",
+  "max_in_flight": 100,
+  "requests": 1000,
+  "statuses": {
+    "200": 1000
+  },
+  "seconds": 0.372,
+  "requests_per_second": 2687.4,
+  "latency_ms": {
+    "p50": 7.64,
+    "p95": 270.46,
+    "p99": 349.26,
+    "max": 354.74
+  }
+}

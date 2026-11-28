@@ -2,6 +2,7 @@ import { accountStorage } from './account'
 import { translateAutomatically } from './auto-translate'
 import { builtInAudioText, PHRASE_KEYS, OUTPUT_LANGUAGES, translatePhrase } from './languages'
 export interface SpeechCallbacks {
+  signal?: AbortSignal
   queue?: boolean
   translate?: boolean
   onStart?: () => void
@@ -13,13 +14,14 @@ let jobs: SpeechJob[] = []
 let busy = false
 let generation = 0
 let audio: HTMLAudioElement | null = null
+let activeJob: SpeechJob | null = null
 let currentUtterance: SpeechSynthesisUtterance | null = null
 let lastSpeech: { text: string; language: string } | null = null
 const locale = (value: string) => value.replace(/_/g, '-').toLowerCase()
 const notify = (state: string, job?: SpeechJob, error?: string) => window.dispatchEvent(new CustomEvent('signbridge-speech', { detail: { state, text: job?.text, language: job?.language, error } }))
 export function getLastSpeech() { return lastSpeech }
 export function stopSpeech() {
-  generation += 1; jobs = []; busy = false
+  generation += 1; jobs = []; busy = false; activeJob = null
   if (audio) { audio.pause(); audio.src = ''; audio = null }
   if (currentUtterance) { currentUtterance.onend = null; currentUtterance.onerror = null }
   window.speechSynthesis?.cancel(); currentUtterance = null
@@ -43,15 +45,29 @@ async function waitForVoices() {
 }
 async function playNext() {
   if (busy || !jobs.length) return
+  while (jobs[0]?.callbacks.signal?.aborted) jobs.shift()
+  if (!jobs.length) return
   busy = true
   const job = jobs.shift()!
+  activeJob = job
   const token = generation
   let settled = false
+  const abort = () => {
+    if (activeJob !== job || settled) return
+    settled = true
+    generation += 1
+    if (audio) { audio.pause(); audio.src = ''; audio = null }
+    if (currentUtterance) { currentUtterance.onend = null; currentUtterance.onerror = null; window.speechSynthesis?.cancel(); currentUtterance = null }
+    busy = false; activeJob = null
+    void playNext()
+  }
+  job.callbacks.signal?.addEventListener('abort', abort, { once: true })
   const started = () => { if (token !== generation) return; lastSpeech = { text: job.text, language: job.language }; job.callbacks.onStart?.(); notify('speaking', job) }
   const finish = (error?: string) => {
     if (token !== generation || settled) return
     settled = true
-    busy = false; audio = null; currentUtterance = null
+    job.callbacks.signal?.removeEventListener('abort', abort)
+    busy = false; activeJob = null; audio = null; currentUtterance = null
     if (error) { job.callbacks.onError?.(error); notify('error', job, error) }
     else { job.callbacks.onEnd?.(); notify('finished', job) }
     void playNext()
@@ -89,7 +105,7 @@ async function playNext() {
   window.speechSynthesis.resume(); window.speechSynthesis.speak(utterance)
 }
 export function speakText(text: string, language = 'en-IN', rate = 1, callbacks: SpeechCallbacks = {}): boolean {
-  if (!text.trim()) return false
+  if (!text.trim() || callbacks.signal?.aborted) return false
   let needsTranslation = false
   const output = accountStorage.getItem('signbridge-output-language')
   if (output && callbacks.translate !== false) {

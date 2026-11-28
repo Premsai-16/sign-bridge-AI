@@ -1,3 +1,4 @@
+import LocalizedNavLabel from '../components/LocalizedNavLabel'
 import { accountStorage } from '../lib/account'
 import { useState, useRef, useEffect } from 'react'
 import {
@@ -12,7 +13,8 @@ import {
   Trash2,
   Check,
 } from 'lucide-react'
-import { speakText } from '../lib/speech'
+import { OUTPUT_LANGUAGES } from '../lib/languages'
+import { speakText, stopSpeech } from '../lib/speech'
 import { saveSession } from '../lib/sessions'
 
 interface ChatMessage {
@@ -20,6 +22,7 @@ interface ChatMessage {
   sender: 'signer' | 'partner'
   text: string
   timestamp: string
+  language?: string
 }
 
 const QUICK_CHIPS = [
@@ -36,7 +39,8 @@ const QUICK_CHIPS = [
 export default function CommunicationHub() {
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     try {
-      return JSON.parse(accountStorage.getItem('signbridge-hub-messages') || '[]')
+      const saved = JSON.parse(accountStorage.getItem('signbridge-hub-messages') || '[]')
+      return Array.isArray(saved) ? saved.filter(item => typeof item?.text === 'string' && typeof item?.id === 'string' && ['signer','partner'].includes(item.sender)).slice(-200) : []
     } catch {
       return []
     }
@@ -45,24 +49,36 @@ export default function CommunicationHub() {
   const [activeRole, setActiveRole] = useState<'signer' | 'partner'>('signer')
   const [isListening, setIsListening] = useState(false)
   const [liveCaption, setLiveCaption] = useState('')
-  const [autoSpeak, setAutoSpeak] = useState(true)
-  const [selectedVoice, setSelectedVoice] = useState(() => accountStorage.getItem('signbridge-voice') || 'en-IN')
-  const [speechRate, setSpeechRate] = useState(1.0)
+  const [autoSpeak, setAutoSpeak] = useState(() => accountStorage.getItem('signbridge-auto-speak') !== 'false')
+  const [selectedVoice, setSelectedVoice] = useState(() => accountStorage.getItem('signbridge-output-language') || 'en-IN')
+  const [speechRate, setSpeechRate] = useState(() => Number(accountStorage.getItem('signbridge-speech-rate') || '1'))
+  const [captionLanguage, setCaptionLanguage] = useState(() => accountStorage.getItem('signbridge-caption-language') || 'en-IN')
+  const [notice, setNotice] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
   const recognitionRef = useRef<any>(null)
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     accountStorage.setItem('signbridge-hub-messages', JSON.stringify(messages))
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    messagesEndRef.current?.scrollIntoView({ behavior: accountStorage.getItem('signbridge-reduced-motion') === 'true' ? 'instant' : 'smooth', block: 'nearest' })
   }, [messages])
+
+  useEffect(() => () => {
+    const recognition = recognitionRef.current
+    if (recognition) {
+      recognition.onresult = null; recognition.onerror = null; recognition.onend = null
+      recognition.abort()
+    }
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+  }, [])
 
   // Initialize Speech-to-Text
   const toggleListening = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     if (!SpeechRecognition) {
-      alert('Speech-to-text is not supported in this browser. Please use Chrome, Edge, or Safari.')
+      setNotice('Speech-to-text is unavailable in this browser. You can still type replies below.')
       return
     }
 
@@ -76,7 +92,8 @@ export default function CommunicationHub() {
       const recognition = new SpeechRecognition()
       recognition.continuous = true
       recognition.interimResults = true
-      recognition.lang = selectedVoice
+      recognition.lang = captionLanguage
+      setNotice('')
 
       recognition.onresult = (event: any) => {
         let interim = ''
@@ -91,20 +108,23 @@ export default function CommunicationHub() {
 
         if (final) {
           const newMsg: ChatMessage = {
-            id: Date.now().toString(),
+            id: crypto.randomUUID(),
             sender: 'partner',
+            language: captionLanguage,
             text: final.trim(),
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           }
-          setMessages(prev => [...prev, newMsg])
+          setMessages(prev => [...prev, newMsg].slice(-200))
           setLiveCaption('')
         } else {
           setLiveCaption(interim)
         }
       }
 
-      recognition.onerror = () => {
+      recognition.onerror = (event: {error: string}) => {
         setIsListening(false)
+        setLiveCaption('')
+        setNotice(event.error === 'not-allowed' ? 'Microphone access was denied. Allow it in browser settings or type your reply.' : event.error === 'no-speech' ? 'No speech was detected. Try the microphone again.' : 'Speech recognition stopped. Check your connection or type your reply.')
       }
 
       recognition.onend = () => {
@@ -116,6 +136,7 @@ export default function CommunicationHub() {
       setIsListening(true)
     } catch {
       setIsListening(false)
+      setNotice('The microphone could not start. Check browser permissions or type your reply.')
     }
   }
 
@@ -124,24 +145,28 @@ export default function CommunicationHub() {
     if (!content) return
 
     const newMsg: ChatMessage = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       sender: activeRole,
       text: content,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     }
 
-    setMessages(prev => [...prev, newMsg])
+    setMessages(prev => [...prev, newMsg].slice(-200))
     setInputText('')
 
     if (autoSpeak && activeRole === 'signer') {
-      speakText(content, selectedVoice, speechRate)
+      speakText(content, selectedVoice, speechRate, {onError: setNotice})
     }
   }
 
-  const handleCopy = (text: string, id: string) => {
-    navigator.clipboard?.writeText(text)
-    setCopiedId(id)
-    setTimeout(() => setCopiedId(null), 2000)
+  const handleCopy = async (text: string, id: string) => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable')
+      await navigator.clipboard.writeText(text)
+      setCopiedId(id)
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = setTimeout(() => setCopiedId(null), 2000)
+    } catch { setNotice('Could not copy automatically. Select the message text and copy it manually.') }
   }
 
   const handleSaveSession = () => {
@@ -150,11 +175,16 @@ export default function CommunicationHub() {
       .map(m => `[${m.timestamp}] ${m.sender.toUpperCase()}: ${m.text}`)
       .join('\n')
     saveSession(textContent, 'Two-Way Hub Session')
-    alert('Session saved to Conversation History!')
+    setNotice('Transcript added to your history. Check the account save status before leaving.')
   }
 
   const handleClear = () => {
     if (confirm('Clear current conversation?')) {
+      const recognition = recognitionRef.current
+      if (recognition) { recognition.onresult = null; recognition.onerror = null; recognition.onend = null; recognition.abort(); recognitionRef.current = null }
+      setIsListening(false)
+      setLiveCaption('')
+      stopSpeech()
       setMessages([])
       accountStorage.removeItem('signbridge-hub-messages')
     }
@@ -170,7 +200,7 @@ export default function CommunicationHub() {
             <span>Dual-Channel Accessibility Hub</span>
           </div>
           <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">
-            Communication Hub
+            <LocalizedNavLabel label="Communication Hub"/>
           </h1>
           <p className="mt-1 text-muted-foreground text-sm sm:text-base max-w-2xl">
             Seamless two-way conversation between Signers and Speaking Partners with instant speech
@@ -185,7 +215,7 @@ export default function CommunicationHub() {
             className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-4 py-2 text-xs font-semibold hover:bg-muted transition disabled:opacity-40"
           >
             <Download className="h-4 w-4" />
-            Save Transcript
+            <LocalizedNavLabel label="Save Transcript"/>
           </button>
           <button
             onClick={handleClear}
@@ -193,43 +223,44 @@ export default function CommunicationHub() {
             className="inline-flex items-center gap-1.5 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs font-semibold text-destructive hover:bg-destructive/10 transition disabled:opacity-40"
           >
             <Trash2 className="h-4 w-4" />
-            Clear
+            <LocalizedNavLabel label="Clear"/>
           </button>
         </div>
       </div>
 
+      {notice && <p role="status" className="mb-4 rounded-xl border border-primary/20 bg-primary/5 p-4 text-sm">{notice}</p>}
       {/* Main Grid */}
       <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
         {/* Left Column: Two-Way Chat Workspace */}
         <div className="flex flex-col rounded-3xl border border-border bg-card overflow-hidden shadow-xl h-[620px]">
           {/* Chat Header */}
-          <div className="flex items-center justify-between border-b border-border bg-muted/30 px-6 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-muted/30 px-4 py-4">
             <div className="flex items-center gap-2">
               <span className="flex h-3 w-3 rounded-full bg-emerald-500"></span>
-              <span className="text-sm font-bold">Active Communication Channel</span>
+              <span className="text-sm font-bold"><LocalizedNavLabel label="Active Communication Channel"/></span>
             </div>
 
             {/* Role Switcher */}
             <div className="flex rounded-lg bg-background p-1 border border-border text-xs">
               <button
-                onClick={() => setActiveRole('signer')}
+                aria-pressed={activeRole === 'signer'} onClick={() => setActiveRole('signer')}
                 className={`px-3 py-1 rounded font-semibold transition ${
                   activeRole === 'signer'
                     ? 'bg-primary text-primary-foreground shadow-sm'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                Signer (Deaf)
+                <LocalizedNavLabel label="Your message"/>
               </button>
               <button
-                onClick={() => setActiveRole('partner')}
+                aria-pressed={activeRole === 'partner'} onClick={() => setActiveRole('partner')}
                 className={`px-3 py-1 rounded font-semibold transition ${
                   activeRole === 'partner'
                     ? 'bg-secondary text-secondary-foreground shadow-sm'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                Speaking Partner
+                <LocalizedNavLabel label="Partner reply"/>
               </button>
             </div>
           </div>
@@ -240,7 +271,7 @@ export default function CommunicationHub() {
               <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground">
                 <MessageSquare className="h-12 w-12 stroke-1 mb-3 text-primary/40" />
                 <p className="font-display font-semibold text-base text-foreground">
-                  No messages yet
+                  <LocalizedNavLabel label="No messages yet"/>
                 </p>
                 <p className="text-xs sm:text-sm max-w-sm mt-1">
                   Type a message below or press the speech microphone button to transcribe spoken replies.
@@ -262,7 +293,7 @@ export default function CommunicationHub() {
                         isSigner ? 'text-primary' : 'text-secondary'
                       }`}
                     >
-                      {isSigner ? 'Signer (You)' : 'Hearing Partner'}
+                      {isSigner ? 'You' : 'Partner'}
                     </span>
                     <span className="text-[10px] text-muted-foreground">{msg.timestamp}</span>
                   </div>
@@ -279,12 +310,12 @@ export default function CommunicationHub() {
                     {/* Hover Action Buttons */}
                     <div className="mt-2 flex items-center gap-2 opacity-80 group-hover:opacity-100 transition">
                       <button
-                        onClick={() => speakText(msg.text, selectedVoice, speechRate)}
+                        onClick={() => speakText(msg.text, msg.language || selectedVoice, speechRate, {onError: setNotice, ...(msg.language ? {translate: false} : {})})}
                         className="rounded p-1 hover:bg-black/15 transition text-xs flex items-center gap-1"
                         title="Speak aloud"
                       >
                         <Volume2 className="h-3.5 w-3.5" />
-                        <span className="text-[10px]">Speak</span>
+                        <span className="text-[10px]"><LocalizedNavLabel label="Speak"/></span>
                       </button>
                       <button
                         onClick={() => handleCopy(msg.text, msg.id)}
@@ -296,7 +327,7 @@ export default function CommunicationHub() {
                         ) : (
                           <Copy className="h-3.5 w-3.5" />
                         )}
-                        <span className="text-[10px]">Copy</span>
+                        <span className="text-[10px]"><LocalizedNavLabel label="Copy"/></span>
                       </button>
                     </div>
                   </div>
@@ -326,6 +357,8 @@ export default function CommunicationHub() {
               className="flex items-center gap-2"
             >
               <input
+                aria-label="Conversation message"
+                maxLength={1500}
                 type="text"
                 value={inputText}
                 onChange={e => setInputText(e.target.value)}
@@ -334,7 +367,7 @@ export default function CommunicationHub() {
                     ? 'Type message to speak aloud...'
                     : 'Type or click mic to speak...'
                 }
-                className="flex-1 rounded-2xl border border-border bg-background px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary shadow-inner"
+                className="min-w-0 flex-1 rounded-2xl border border-border bg-background px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary shadow-inner"
               />
 
               <button
@@ -351,6 +384,8 @@ export default function CommunicationHub() {
               </button>
 
               <button
+                aria-label="Send message"
+                disabled={!inputText.trim()}
                 type="submit"
                 className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground hover:bg-primary/90 transition shadow-md"
               >
@@ -365,13 +400,14 @@ export default function CommunicationHub() {
           {/* Audio Engine Configuration */}
           <div className="rounded-3xl border border-border bg-card p-6 shadow-sm">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-display text-lg font-bold">Voice & Speech Engine</h3>
+              <h3 className="font-display text-lg font-bold"><LocalizedNavLabel label="Voice & Speech Engine"/></h3>
               <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground font-medium">Auto-Speak:</span>
+                <span className="text-xs text-muted-foreground font-medium"><LocalizedNavLabel label="Auto-Speak:"/></span>
                 <input
                   type="checkbox"
                   checked={autoSpeak}
-                  onChange={e => setAutoSpeak(e.target.checked)}
+                  aria-label="Automatically speak your messages"
+                  onChange={e => { setAutoSpeak(e.target.checked); accountStorage.setItem('signbridge-auto-speak', String(e.target.checked)); if (!e.target.checked) stopSpeech() }}
                   className="rounded text-primary focus:ring-primary h-4 w-4"
                 />
               </div>
@@ -380,28 +416,28 @@ export default function CommunicationHub() {
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-muted-foreground uppercase mb-2">
-                  Spoken Voice Language
+                  <LocalizedNavLabel label="Spoken Voice Language"/>
                 </label>
                 <select
+                  aria-label="Spoken output language"
                   value={selectedVoice}
                   onChange={e => {
                     setSelectedVoice(e.target.value)
-                    accountStorage.setItem('signbridge-voice', e.target.value)
+                    accountStorage.setItem('signbridge-output-language', e.target.value)
+                    window.dispatchEvent(new Event('signbridge-language'))
+                    stopSpeech()
                   }}
                   className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-xs font-semibold"
                 >
-                  <option value="en-IN">English (India)</option>
-                  <option value="en-US">English (US)</option>
-                  <option value="hi-IN">Hindi (India)</option>
-                  <option value="bn-IN">Bengali (India)</option>
-                  <option value="ta-IN">Tamil (India)</option>
-                  <option value="te-IN">Telugu (India)</option>
+                  {OUTPUT_LANGUAGES.map(language => <option key={language.code} value={language.code}>{language.name}</option>)}
                 </select>
               </div>
 
+              <label className="block text-sm"><LocalizedNavLabel label="Partner’s spoken language"/><select aria-label="Partner’s spoken language" value={captionLanguage} className="mt-2 w-full rounded-xl border border-border bg-background p-3" onChange={event => { recognitionRef.current?.stop(); setIsListening(false); setLiveCaption(''); setCaptionLanguage(event.target.value); accountStorage.setItem('signbridge-caption-language', event.target.value) }}>{OUTPUT_LANGUAGES.map(language => <option key={language.code} value={language.code}>{language.name}</option>)}</select></label>
+              <button className="action-secondary" onClick={stopSpeech}><LocalizedNavLabel label="Stop all audio"/></button>
               <div>
                 <div className="flex justify-between text-xs mb-1">
-                  <span className="font-semibold text-muted-foreground uppercase">Speech Speed</span>
+                  <span className="font-semibold text-muted-foreground uppercase"><LocalizedNavLabel label="Speech Speed"/></span>
                   <span className="font-bold text-primary">{speechRate}x</span>
                 </div>
                 <input
@@ -410,7 +446,8 @@ export default function CommunicationHub() {
                   max="1.5"
                   step="0.1"
                   value={speechRate}
-                  onChange={e => setSpeechRate(Number(e.target.value))}
+                  aria-label="Speaking speed"
+                  onChange={e => { setSpeechRate(Number(e.target.value)); accountStorage.setItem('signbridge-speech-rate', e.target.value) }}
                   className="w-full accent-primary"
                 />
               </div>
@@ -419,7 +456,7 @@ export default function CommunicationHub() {
 
           {/* Quick Response Chips */}
           <div className="rounded-3xl border border-border bg-card p-6 shadow-sm">
-            <h3 className="font-display text-lg font-bold mb-2">Instant Quick Responses</h3>
+            <h3 className="font-display text-lg font-bold mb-2"><LocalizedNavLabel label="Instant Quick Responses"/></h3>
             <p className="text-xs text-muted-foreground mb-4">
               Tap any chip to instantly send and speak aloud without typing.
             </p>

@@ -15,5 +15,6 @@ class UserExample(Base):
     consented: Mapped[bool] = mapped_column(Boolean, default=False)
     dataset_split: Mapped[str] = mapped_column(String(12), default="train", nullable=False)
     participant_code: Mapped[str] = mapped_column(String(24), default="legacy", nullable=False)
+    upload_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     clip_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))

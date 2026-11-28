@@ -24,6 +24,8 @@ export function translatePhrase(text: string, language: string): { text: string;
   if (index >= 0 && Object.values(phrases).some(values => values[index] === text)) return { text, translated: true }
   const custom = sharedTranslations[text.trim().toLowerCase()]?.[language]
   const nativeScripts: Record<string, RegExp> = { 'kn-IN': /[\u0C80-\u0CFF]/, 'ta-IN': /[\u0B80-\u0BFF]/, 'te-IN': /[\u0C00-\u0C7F]/, 'hi-IN': /[\u0900-\u097F]/ }
+  // Text already written in the selected script is spoken as-is.
+  if (nativeScripts[language]?.test(text)) return { text, translated: true }
   if (custom && (!nativeScripts[language] || nativeScripts[language].test(custom))) return { text: custom, translated: true }
   const value = phrases[text.trim().toLowerCase().replace(/[.!?]+$/, '')]?.[index]
   return { text: value || text, translated: index < 0 || Boolean(value) }

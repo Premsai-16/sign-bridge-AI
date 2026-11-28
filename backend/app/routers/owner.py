@@ -1,3 +1,5 @@
+import hashlib
+from functools import lru_cache
 import json
 import math
 import os
@@ -9,10 +11,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from ..database import SessionLocal
 from ..models import UserExample
@@ -109,7 +112,7 @@ def classify(sequence: list[list[float]], templates: dict[str, list[list[list[fl
     ranked.sort()
     if not ranked or ranked[0][0] > MAX_MATCH_DISTANCE:
         return "unknown"
-    margin = max(0.0, 1.0 - ranked[0][0] / max(ranked[1][0], 1e-6)) if len(ranked) > 1 else 1.0
+    margin = max(0.0, (ranked[1][0] - ranked[0][0]) / max(ranked[1][0], 1e-6)) if len(ranked) > 1 else 1.0
     if len(ranked) > 1 and margin < MIN_MARGIN:
         return "unknown"
     return ranked[0][1]
@@ -130,6 +133,10 @@ async def list_examples(_: str = Depends(validate_admin_session), db: Session = 
     } for item in examples]
 
 
+def example_response(entry: UserExample):
+    return {"id": entry.id, "label": entry.label, "created_at": entry.created_at, "consented": entry.consented, "dataset_split": entry.dataset_split, "participant_code": entry.participant_code, "num_frames": entry.num_frames, "has_video": bool(entry.clip_path)}
+
+
 @router.post("/examples")
 async def add_example(
     label: str = Form(...),
@@ -138,9 +145,18 @@ async def add_example(
     dataset_split: Literal["train", "validation"] = Form("train"),
     participant_code: str = Form(...),
     video: UploadFile = File(...),
+    upload_id: str | None = Form(None),
     _: str = Depends(validate_admin_session),
     db: Session = Depends(get_db),
 ):
+    if upload_id is not None:
+        try:
+            upload_id = str(uuid.UUID(upload_id))
+        except ValueError as cause:
+            raise HTTPException(status_code=400, detail="Invalid recording identifier.") from cause
+        existing = db.query(UserExample).filter(UserExample.upload_id == upload_id).first()
+        if existing:
+            return example_response(existing)
     try:
         decoded_frames = json.loads(frames_json)
         example = ExampleInput(label=label, frames=decoded_frames, consented=consented, dataset_split=dataset_split, participant_code=participant_code)
@@ -172,11 +188,24 @@ async def add_example(
         dataset_split=example.dataset_split,
         participant_code=example.participant_code,
         clip_path=str(clip_file),
+        upload_id=upload_id,
     )
     db.add(entry)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        clip_file.unlink(missing_ok=True)
+        existing = db.query(UserExample).filter(UserExample.upload_id == upload_id).first() if upload_id else None
+        if existing:
+            return example_response(existing)
+        raise
+    except Exception:
+        db.rollback()
+        clip_file.unlink(missing_ok=True)
+        raise
     db.refresh(entry)
-    return {"id": entry.id, "label": entry.label, "created_at": entry.created_at, "consented": entry.consented, "dataset_split": entry.dataset_split, "participant_code": entry.participant_code, "num_frames": entry.num_frames, "has_video": True}
+    return example_response(entry)
 
 
 @router.get("/examples/{example_id}/video")
@@ -330,15 +359,29 @@ async def publish_model(_: str = Depends(validate_admin_session), db: Session = 
     return {"published": True, "version": version, "labels": payload["labels"], "examples_per_label": payload["examples_per_label"], "validation_metrics": metrics}
 
 
+@lru_cache(maxsize=4)
+def _published_model_response(filename: str, modified_ns: int, size: int):
+    # Signature includes file metadata so publish/rollback invalidates the cache.
+    payload = json.loads(Path(filename).read_text(encoding="utf-8")) | {"published": True}
+    body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+    etag = '"' + hashlib.sha256(body).hexdigest() + '"'
+    return body, etag
+
+
 @router.get("/model")
-async def get_published_model():
+def get_published_model(request: Request):
     path = model_path()
     if not path.is_file():
         return {"published": False}
     try:
-        return json.loads(path.read_text(encoding="utf-8")) | {"published": True}
-    except (OSError, json.JSONDecodeError):
+        info = path.stat()
+        body, etag = _published_model_response(str(path.resolve()), info.st_mtime_ns, info.st_size)
+    except (OSError, ValueError, TypeError):
         raise HTTPException(status_code=503, detail="Published model could not be loaded")
+    headers = {"ETag": etag, "Cache-Control": "no-cache"}
+    if request.headers.get('if-none-match') == etag:
+        return Response(status_code=304, headers=headers)
+    return Response(content=body, media_type='application/json', headers=headers)
 
 
 @router.get("/versions")

@@ -1,3 +1,4 @@
+import PersonalWelcome from '../components/PersonalWelcome'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { BookOpen, Camera, Check, Hand, HeartPulse, Languages, LockKeyhole, MessageSquare, Mic, ShieldCheck, Volume2 } from 'lucide-react'
@@ -34,6 +35,7 @@ export default function Landing() {
   return (
     <div className={`welcome-page immersive-welcome ${motionPaused ? 'motion-paused' : ''}`}>
       <div className="aurora-scene" aria-hidden="true"><i /><i /><i /></div>
+      <PersonalWelcome />
       <section className="welcome-hero page-width" aria-labelledby="welcome-title">
         <div className="welcome-copy">
           <p className="eyebrow"><span className="eyebrow-line" /> SIGN. SPEAK. CONNECT.</p>

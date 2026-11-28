@@ -20,6 +20,10 @@ with engine.begin() as connection:
     if "clip_path" not in example_columns:
         connection.execute(text("ALTER TABLE user_examples ADD COLUMN clip_path VARCHAR(500)"))
 
+    if "upload_id" not in example_columns:
+        connection.execute(text("ALTER TABLE user_examples ADD COLUMN upload_id VARCHAR(36)"))
+    connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_user_examples_upload_id ON user_examples (upload_id)"))
+
 app = FastAPI(
     title="SignBridge AI API",
     description="Accessibility platform for Indian Sign Language communication",

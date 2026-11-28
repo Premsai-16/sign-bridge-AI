@@ -1,4 +1,8 @@
-import { accountStorage } from '../lib/account'
+import DeviceCheck from '../components/DeviceCheck'
+import { accountStorage, flushAccountSaves } from '../lib/account'
+import { OUTPUT_LANGUAGES } from '../lib/languages'
+import { stopSpeech } from '../lib/speech'
+import LocalizedNavLabel from '../components/LocalizedNavLabel'
 import { useEffect, useState } from 'react'
 import { Volume2, Shield, Palette, Camera, Coffee } from 'lucide-react'
 import { clearSessions, getSavedSessions } from '../lib/sessions'
@@ -10,7 +14,7 @@ export default function Settings() {
   const [highContrast, setHighContrast] = useState(() => accountStorage.getItem('signbridge-high-contrast') === 'true')
   const [reducedMotion, setReducedMotion] = useState(() => accountStorage.getItem('signbridge-reduced-motion') === 'true')
   const [cameraQuality, setCameraQuality] = useState(() => accountStorage.getItem('signbridge-camera-quality') || '720p')
-  const [voice, setVoice] = useState(() => accountStorage.getItem('signbridge-voice') || 'en-IN')
+  const [voice, setVoice] = useState(() => accountStorage.getItem('signbridge-output-language') || 'en-IN')
   const [speechRate, setSpeechRate] = useState(() => accountStorage.getItem('signbridge-speech-rate') || '1')
   const [notice, setNotice] = useState('')
 
@@ -25,34 +29,34 @@ export default function Settings() {
   }, [highContrast])
 
   useEffect(() => {
-    document.documentElement.classList.toggle('reduced-motion', reducedMotion)
+    document.documentElement.classList.toggle('reduce-motion', reducedMotion)
     accountStorage.setItem('signbridge-reduced-motion', String(reducedMotion))
   }, [reducedMotion])
 
   const exportData = () => {
-    const payload = { exportedAt: new Date().toISOString(), sessions: getSavedSessions(), personalSignExamples: loadSignExamples() }
+    const payload = { schemaVersion: 1, exportedAt: new Date().toISOString(), sessions: getSavedSessions(), personalSignExamples: loadSignExamples(), learningProgress: Object.fromEntries(['signbridge-alphabet-practice','signbridge-number-practice','signbridge-mastered-signs','signbridge-xp','signbridge-practice'].map(key => [key, accountStorage.getItem(key)])), conversation: accountStorage.getItem('signbridge-hub-messages'), voiceShortcuts: accountStorage.getItem('signbridge-voice-shortcuts') }
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }))
     const anchor = document.createElement('a')
     anchor.href = url
     anchor.download = 'signbridge-data.json'
     anchor.click()
-    URL.revokeObjectURL(url)
-    setNotice('Your saved sessions were exported.')
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    setNotice('Your sessions, personal signs, learning progress and voice shortcuts were exported. Keep this file private.')
   }
 
-  const deleteData = () => {
-    if (!window.confirm('Delete all saved sessions, personal sign examples, and study progress from this browser? This cannot be undone.')) return
+  const deleteData = async () => {
+    if (!window.confirm('Delete your saved sessions, personal signs, conversations, voice shortcuts and study progress from your account on all devices? Your profile and shared owner vocabulary will remain. Export a backup first. This cannot be undone.')) return
     clearSessions()
     clearSignExamples()
-    accountStorage.removeItem('signbridge-practice')
+    for (const key of ['signbridge-practice','signbridge-alphabet-practice','signbridge-number-practice','signbridge-mastered-signs','signbridge-xp','signbridge-hub-messages','signbridge-voice-shortcuts']) accountStorage.removeItem(key)
     accountStorage.removeItem('signbridge-community-interests')
-    setNotice('Saved sessions, sign examples, and study progress were deleted from this browser.')
+    setNotice(await flushAccountSaves() ? 'Personal content and learning progress were deleted from your account.' : 'Deletion has not reached the server yet. Keep this tab open and use Save now to retry.')
   }
 
   return (
     <div className="prism-page container py-8 max-w-7xl">
       <div className="prism-page-heading flex flex-col gap-4 mb-6">
-        <h1 className="font-display text-3xl font-bold tracking-tight">Settings</h1>
+        <h1 className="font-display text-3xl font-bold tracking-tight"><LocalizedNavLabel label="Settings"/></h1>
         <p className="text-muted-foreground max-w-2xl">
           Customize your SignBridge AI experience to match your preferences and workflow.
         </p>
@@ -63,7 +67,7 @@ export default function Settings() {
           <div className="rounded-2xl border border-border bg-card p-6">
             <div className="flex items-center gap-3 mb-4">
               <Palette className="h-5 w-5 text-primary" />
-              <h2 className="font-display text-xl font-semibold">Appearance</h2>
+              <h2 className="font-display text-xl font-semibold"><LocalizedNavLabel label="Appearance"/></h2>
             </div>
             <div className="space-y-4">
               <ToggleSetting
@@ -87,13 +91,13 @@ export default function Settings() {
           <div className="rounded-2xl border border-border bg-card p-6">
             <div className="flex items-center gap-3 mb-4">
               <Camera className="h-5 w-5 text-primary" />
-              <h2 className="font-display text-xl font-semibold">Camera</h2>
+              <h2 className="font-display text-xl font-semibold"><LocalizedNavLabel label="Camera"/></h2>
             </div>
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">Camera preview starts only after you choose Open Camera and grant browser permission.</p>
 
               <div>
-                <label className="text-sm font-medium mb-2 block">Camera Quality</label>
+                <label className="text-sm font-medium mb-2 block"><LocalizedNavLabel label="Camera Quality"/></label>
                 <select value={cameraQuality} onChange={event => { setCameraQuality(event.target.value); accountStorage.setItem('signbridge-camera-quality', event.target.value) }} className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm">
                   <option value="720p">720p (Recommended)</option>
                   <option value="1080p">1080p</option>
@@ -108,7 +112,7 @@ export default function Settings() {
           <div className="rounded-2xl border border-border bg-card p-6">
             <div className="flex items-center gap-3 mb-4">
               <Volume2 className="h-5 w-5 text-primary" />
-              <h2 className="font-display text-xl font-semibold">Speech</h2>
+              <h2 className="font-display text-xl font-semibold"><LocalizedNavLabel label="Speech"/></h2>
             </div>
             <div className="space-y-4">
               <ToggleSetting
@@ -119,29 +123,14 @@ export default function Settings() {
               />
 
               <div>
-                <label className="text-sm font-medium mb-2 block">Voice</label>
-                <select value={voice} onChange={event => { setVoice(event.target.value); accountStorage.setItem('signbridge-voice', event.target.value) }} className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm">
-                  <option value="en-IN">English (India)</option>
-                  <option value="en-US">English (United States)</option>
-                  <option value="en-GB">English (United Kingdom)</option>
-                  <option value="hi-IN">Hindi (India)</option>
-                  <option value="bn-IN">Bengali (India)</option>
-                  <option value="gu-IN">Gujarati (India)</option>
-                  <option value="kn-IN">Kannada (India)</option>
-                  <option value="ml-IN">Malayalam (India)</option>
-                  <option value="mr-IN">Marathi (India)</option>
-                  <option value="pa-IN">Punjabi (India)</option>
-                  <option value="ta-IN">Tamil (India)</option>
-                  <option value="te-IN">Telugu (India)</option>
-                  <option value="ur-IN">Urdu (India)</option>
-                  <option value="es-ES">Spanish</option>
-                  <option value="fr-FR">French</option>
-                  <option value="ar-SA">Arabic</option>
+                <label className="text-sm font-medium mb-2 block"><LocalizedNavLabel label="Voice"/></label>
+                <select value={voice} onChange={event => { setVoice(event.target.value); accountStorage.setItem('signbridge-output-language', event.target.value); window.dispatchEvent(new Event('signbridge-language')); stopSpeech() }} className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm">
+                  {OUTPUT_LANGUAGES.map(language => <option key={language.code} value={language.code}>{language.name}</option>)}
                 </select>
               </div>
 
               <div>
-                <label className="text-sm font-medium mb-2 block">Speech Speed</label>
+                <label className="text-sm font-medium mb-2 block"><LocalizedNavLabel label="Speech Speed"/></label>
                 <select value={speechRate} onChange={event => { setSpeechRate(event.target.value); accountStorage.setItem('signbridge-speech-rate', event.target.value) }} className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm">
                   <option value="0.5">0.5×</option>
                   <option value="0.75">0.75×</option>
@@ -158,32 +147,33 @@ export default function Settings() {
         </div>
       </div>
 
+      <DeviceCheck />
       <div className="grid gap-6 lg:grid-cols-2 mt-8">
         <div id="privacy" className="rounded-2xl border border-border bg-card p-6">
           <div className="flex items-center gap-3 mb-4">
             <Shield className="h-5 w-5 text-primary" />
-            <h2 className="font-display text-xl font-semibold">Privacy</h2>
+            <h2 className="font-display text-xl font-semibold"><LocalizedNavLabel label="Privacy"/></h2>
           </div>
           <div className="space-y-4 text-sm text-muted-foreground">
-            <p>• Camera frames are processed in the browser and are not uploaded</p>
-            <p>• Sign landmarks are stored only after you consent</p>
-            <p>• No raw video or audio recordings</p>
+            <p>Live recognition processes camera frames on your device. Owner training saves consented silent video clips on the server.</p>
+            <p>Personal sign landmarks, learning progress and saved conversations are stored with your account.</p>
+            <p>Online translation sends text to the translation provider when enabled. Speech recognition may use your browser’s online service.</p>
             <p>• Export your data anytime</p>
-            <p>• Clear saved sessions from this browser at any time</p>
+            <p>You can export or delete your personal content from your account.</p>
           </div>
         </div>
 
         <div className="rounded-2xl border border-border bg-card p-6">
           <div className="flex items-center gap-3 mb-4">
             <Coffee className="h-5 w-5 text-primary" />
-            <h2 className="font-display text-xl font-semibold">Account</h2>
+            <h2 className="font-display text-xl font-semibold"><LocalizedNavLabel label="Account"/></h2>
           </div>
           <div className="space-y-3">
             <button onClick={exportData} className="w-full rounded-xl border border-border px-4 py-2 text-sm font-medium hover:bg-muted transition">
-              Export Saved Sessions
+              <LocalizedNavLabel label="Export My Content"/>
             </button>
-            <button onClick={deleteData} className="w-full rounded-xl border border-border px-4 py-2 text-sm font-medium text-destructive hover:bg-destructive/10 transition">
-              Delete Local App Data
+            <button onClick={() => void deleteData()} className="w-full rounded-xl border border-border px-4 py-2 text-sm font-medium text-destructive hover:bg-destructive/10 transition">
+              <LocalizedNavLabel label="Delete My Saved Content"/>
             </button>
             <a href="#privacy" className="block w-full rounded-xl border border-border px-4 py-2 text-center text-sm font-medium hover:bg-muted transition">
               View Privacy Policy
@@ -205,7 +195,7 @@ function ToggleSetting({ checked, onChange, label, description }: {
   return (
     <div className="flex items-center justify-between">
       <div>
-        <p className="font-medium text-sm">{label}</p>
+        <p className="font-medium text-sm"><LocalizedNavLabel label={label}/></p>
         <p className="text-xs text-muted-foreground">{description}</p>
       </div>
       <button

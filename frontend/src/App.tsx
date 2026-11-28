@@ -1,25 +1,28 @@
+import WorkspaceBoundary from './components/WorkspaceBoundary'
+import { lazy, Suspense } from 'react'
+import Profile from './pages/Profile'
 import Login from './pages/Login'
 import AccountGate from './components/AccountGate'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ToastProvider } from './components/ui/Toast'
 import Layout from './components/Layout'
-import Landing from './pages/Landing'
-import ConversationStudio from './pages/ConversationStudio'
-import LearnISL from './pages/LearnISL'
-import CommunicationHub from './pages/CommunicationHub'
-import AccessibilityNetwork from './pages/AccessibilityNetwork'
-import ResearchLab from './pages/ResearchLab'
-import Community from './pages/Community'
-import History from './pages/History'
-import Settings from './pages/Settings'
+const Landing = lazy(() => import('./pages/Landing'))
+const ConversationStudio = lazy(() => import('./pages/ConversationStudio'))
+const LearnISL = lazy(() => import('./pages/LearnISL'))
+const CommunicationHub = lazy(() => import('./pages/CommunicationHub'))
+const AccessibilityNetwork = lazy(() => import('./pages/AccessibilityNetwork'))
+const ResearchLab = lazy(() => import('./pages/ResearchLab'))
+const Community = lazy(() => import('./pages/Community'))
+const History = lazy(() => import('./pages/History'))
+const Settings = lazy(() => import('./pages/Settings'))
 import NotFound from './pages/NotFound'
-import OwnerTrainer from './pages/OwnerTrainer'
+const OwnerTrainer = lazy(() => import('./pages/OwnerTrainer'))
 
 function App() {
   return (
-    <ToastProvider>
+    <WorkspaceBoundary><ToastProvider>
       <BrowserRouter>
-        <Routes>
+        <Suspense fallback={<p className="page-width py-20" role="status">Opening your workspace…</p>}><Routes>
           <Route path="/login" element={<Login />} />
           <Route element={<AccountGate />}>
           <Route path="/" element={<Layout />}>
@@ -33,14 +36,15 @@ function App() {
             <Route path="research" element={<ResearchLab />} />
             <Route path="community" element={<Community />} />
             <Route path="history" element={<History />} />
+            <Route path="profile" element={<Profile />} />
             <Route path="settings" element={<Settings />} />
             <Route path="*" element={<NotFound />} />
           </Route>
           </Route>
           <Route path="/owner/trainer" element={<OwnerTrainer />} />
-        </Routes>
+        </Routes></Suspense>
       </BrowserRouter>
-    </ToastProvider>
+    </ToastProvider></WorkspaceBoundary>
   )
 }
 

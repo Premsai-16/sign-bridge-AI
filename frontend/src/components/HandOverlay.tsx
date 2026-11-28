@@ -2,6 +2,9 @@ import { useEffect, useRef } from 'react'
 import type { DetectedHandInfo, GeometricSignPrediction } from '../lib/gesture-classifier'
 
 interface HandOverlayProps {
+  showLabel?: boolean
+  sourceWidth?: number
+  sourceHeight?: number
   hands: DetectedHandInfo[]
   prediction?: GeometricSignPrediction | null
   activeSign?: string | null
@@ -26,7 +29,7 @@ const CONNECTIONS = [
 const FINGERTIPS = [4, 8, 12, 16, 20]
 
 export default function HandOverlay({
-  hands,
+  hands, sourceWidth, sourceHeight, showLabel = true,
   prediction,
   activeSign,
   confidence,
@@ -57,9 +60,13 @@ export default function HandOverlay({
       const landmarks = hand.landmarks
       if (!landmarks || landmarks.length < 21) return
 
+      const scale = sourceWidth && sourceHeight ? Math.min(width/sourceWidth,height/sourceHeight) : 1
+      const contentWidth = sourceWidth ? sourceWidth*scale : width
+      const contentHeight = sourceHeight ? sourceHeight*scale : height
+      const offsetX=(width-contentWidth)/2, offsetY=(height-contentHeight)/2
       const coords = landmarks.map(lm => {
-        const x = mirrored ? (1 - lm.x) * width : lm.x * width
-        const y = lm.y * height
+        const x = mirrored ? (1 - lm.x) * contentWidth + offsetX : lm.x * contentWidth + offsetX
+        const y = lm.y * contentHeight + offsetY
         return { x, y }
       })
 
@@ -202,7 +209,7 @@ export default function HandOverlay({
 
       // 5. If this is the primary hand and a sign is actively detected, draw a holographic banner
       const activeLabel = activeSign || prediction?.label
-      if (handIndex === 0 && activeLabel) {
+      if (showLabel && handIndex === 0 && activeLabel) {
         const confPercent = Math.round((confidence || prediction?.confidence || 0.85) * 100)
         const signText = `⚡ ${activeLabel}`
         const subText = `${confPercent}% match`
@@ -235,7 +242,7 @@ export default function HandOverlay({
 
       ctx.restore()
     })
-  }, [hands, prediction, activeSign, confidence, mirrored])
+  }, [hands, prediction, activeSign, confidence, mirrored, sourceWidth, sourceHeight, showLabel])
 
   return (
     <canvas

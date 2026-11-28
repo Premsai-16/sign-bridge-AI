@@ -9,7 +9,7 @@ export default function ThreeCanvasBackground() {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    let animationFrameId: number
+    const frame = { id: 0 }
     const viewport = { width: (canvas.width = window.innerWidth), height: (canvas.height = window.innerHeight) }
 
     const handleResize = () => {
@@ -32,8 +32,6 @@ export default function ThreeCanvasBackground() {
       color: Math.random() > 0.6 ? '#6366f1' : Math.random() > 0.3 ? '#06b6d4' : '#f59e0b',
     }))
 
-    let mouseX = 0
-    let mouseY = 0
     const targetMouse = { x: 0, y: 0 }
 
     const handleMouseMove = (e: MouseEvent) => {
@@ -42,18 +40,20 @@ export default function ThreeCanvasBackground() {
     }
     window.addEventListener('mousemove', handleMouseMove)
 
-    let time = 0
+    const motion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const animation = { time: 0, mouseX: 0, mouseY: 0 }
+    const canAnimate = () => !motion.matches && !document.hidden && !document.documentElement.classList.contains('reduce-motion')
 
     const render = () => {
-      time += 0.015
-      mouseX += (targetMouse.x - mouseX) * 0.05
-      mouseY += (targetMouse.y - mouseY) * 0.05
+      animation.time += 0.015
+      animation.mouseX += (targetMouse.x - animation.mouseX) * 0.05
+      animation.mouseY += (targetMouse.y - animation.mouseY) * 0.05
 
       ctx.clearRect(0, 0, viewport.width, viewport.height)
 
       const fov = 400
-      const cx = viewport.width / 2 + mouseX
-      const cy = viewport.height / 2 + mouseY
+      const cx = viewport.width / 2 + animation.mouseX
+      const cy = viewport.height / 2 + animation.mouseY
 
       // 1. Draw flowing 3D wave ribbons in the background
       ctx.save()
@@ -73,8 +73,8 @@ export default function ThreeCanvasBackground() {
         for (let x = 0; x <= viewport.width; x += 15) {
           const y =
             cy +
-            Math.sin(x * 0.003 + time + waveOffset) * 90 +
-            Math.cos(x * 0.006 - time * 0.8) * 45
+            Math.sin(x * 0.003 + animation.time + waveOffset) * 90 +
+            Math.cos(x * 0.006 - animation.time * 0.8) * 45
           if (x === 0) ctx.moveTo(x, y)
           else ctx.lineTo(x, y)
         }
@@ -145,21 +145,33 @@ export default function ThreeCanvasBackground() {
       }
       ctx.restore()
 
-      animationFrameId = requestAnimationFrame(render)
+      if (canAnimate()) frame.id = requestAnimationFrame(render)
     }
 
-    animationFrameId = requestAnimationFrame(render)
+    const refresh = () => {
+      cancelAnimationFrame(frame.id)
+      if (!document.hidden) render()
+    }
+    const observer = new MutationObserver(refresh)
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+    motion.addEventListener('change', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    refresh()
 
     return () => {
+      observer.disconnect()
+      motion.removeEventListener('change', refresh)
+      document.removeEventListener('visibilitychange', refresh)
       window.removeEventListener('resize', handleResize)
       window.removeEventListener('mousemove', handleMouseMove)
-      cancelAnimationFrame(animationFrameId)
+      cancelAnimationFrame(frame.id)
     }
   }, [])
 
   return (
     <canvas
       ref={canvasRef}
+      aria-hidden="true"
       className="pointer-events-none fixed inset-0 h-full w-full -z-10 opacity-75"
     />
   )

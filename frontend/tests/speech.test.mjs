@@ -66,3 +66,30 @@ test('disabling online translation prevents network disclosure', async()=>{
  const {translateAutomatically}=await import(`file://${directory}/auto-translate.mjs`)
  await assert.rejects(()=>translateAutomatically('private unseen phrase','hi-IN'),/off/)
 })
+test('personalized Tamil greeting stays one native-language utterance',async()=>{
+ const controller = new AbortController()
+ speech.speakText('வணக்கம் Sai','ta-IN',1,{translate:false,signal:controller.signal})
+ await new Promise(resolve=>setImmediate(resolve))
+ assert.equal(utterances.length,1);assert.equal(utterances[0].text,'வணக்கம் Sai')
+ assert.equal(utterances[0].lang,'ta-IN');assert.equal(utterances[0].voice.voiceURI,'Vani')
+ controller.abort()
+})
+test('cancelled welcome cannot play after waiting for another recording',()=>{
+ speech.speakText('hello','en-IN',1,{translate:false})
+ const controller=new AbortController()
+ speech.speakText('Hello Sai','en-IN',1,{translate:false,queue:true,signal:controller.signal})
+ controller.abort();players[0].onended()
+ assert.equal(utterances.length,0)
+})
+test('new native-language text is not sent for English-to-target translation again',async()=>{
+ values.set('signbridge-output-language','ta-IN')
+ const originalFetch=globalThis.fetch
+ let calls=0
+ globalThis.fetch=async()=>{calls++;throw new Error('Should not translate native text')}
+ try {
+  speech.speakText('நான் இன்று வருகிறேன்','ta-IN')
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(calls,0)
+  assert.equal(utterances[0].text,'நான் இன்று வருகிறேன்')
+ } finally {globalThis.fetch=originalFetch}
+})

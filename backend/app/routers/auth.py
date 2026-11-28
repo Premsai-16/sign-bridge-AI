@@ -1,14 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy import String, DateTime
+from sqlalchemy.orm import Session, Mapped, mapped_column
 from datetime import UTC, datetime, timedelta
 import secrets
 import hashlib
 import os
 
 from ..database import SessionLocal
-from ..models import User
+from ..models import User, Base
 from ..schemas import UserCreate, UserLogin, Token, TokenPayload, SessionResponse
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -20,6 +21,35 @@ SESSION_DURATION_HOURS = 24
 class AdminCredentials(BaseModel):
     username: str
     password: str
+
+class OwnerSession(Base):
+    __tablename__ = 'owner_sessions'
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    username: Mapped[str] = mapped_column(String(100))
+    credential_version: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+def owner_credential_version():
+    return hashlib.sha256((os.getenv('ADMIN_USERNAME', '') + '\0' + os.getenv('ADMIN_PASSWORD', '')).encode()).hexdigest()
+
+
+def issue_owner_session(username: str, db: Session):
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    db.query(OwnerSession).filter(OwnerSession.expires_at < now).delete(synchronize_session=False)
+    db.add(OwnerSession(token_hash=hashlib.sha256(token.encode()).hexdigest(), username=username,
+                        credential_version=owner_credential_version(), expires_at=now + timedelta(hours=SESSION_DURATION_HOURS)))
+    db.commit()
+    return token
+
+
+def revoke_owner_session(token: str, db: Session):
+    session = db.get(OwnerSession, hashlib.sha256(token.encode()).hexdigest())
+    if session:
+        db.delete(session)
+        db.commit()
+
 
 active_sessions: dict[str, dict] = {}
 
@@ -74,69 +104,36 @@ def validate_session(credentials: HTTPAuthorizationCredentials = Depends(securit
     return session["username"]
 
 
-def validate_admin_session(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
-    token = credentials.credentials
-    session = active_sessions.get(token)
-    if not session or session.get("role") != "admin" or datetime.now(UTC) > session["expires_at"]:
-        active_sessions.pop(token, None)
+def validate_admin_session(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)) -> str:
+    session = db.get(OwnerSession, hashlib.sha256(credentials.credentials.encode()).hexdigest())
+    if not session or session.expires_at <= datetime.now(UTC).replace(tzinfo=None) or not secrets.compare_digest(session.credential_version, owner_credential_version()):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Owner sign-in required")
-    return session["username"]
+    return session.username
 
 
 @router.post("/admin/login")
-async def admin_login(credentials: AdminCredentials):
+def admin_login(credentials: AdminCredentials, db: Session = Depends(get_db)):
     username = os.getenv("ADMIN_USERNAME")
     password = os.getenv("ADMIN_PASSWORD")
     if not username or not password:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Owner sign-in is not configured. Set ADMIN_USERNAME and ADMIN_PASSWORD on the server.")
     if not secrets.compare_digest(credentials.username, username) or not secrets.compare_digest(credentials.password, password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect owner username or password")
-    token = secrets.token_urlsafe(32)
-    active_sessions[token] = {"username": username, "role": "admin", "expires_at": datetime.now(UTC) + timedelta(hours=SESSION_DURATION_HOURS)}
+    token = issue_owner_session(username, db)
     return {"access_token": token, "token_type": "bearer", "expires_in": SESSION_DURATION_HOURS * 3600}
 
 
 @router.post("/register", response_model=SessionResponse)
 async def register(user: UserCreate, db: Session = Depends(get_db)):
-    existing_user = db.query(User).filter(User.username == user.username).first()
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Username already exists"
-        )
-
-    password_hash = hash_password(user.password)
-    db_user = User(
-        username=user.username,
-        password_hash=password_hash,
-        email=user.email
-    )
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-
-    session_id = create_session(user.username)
-    return SessionResponse(
-        session_id=session_id,
-        username=user.username
-    )
-
+    raise HTTPException(status_code=403, detail='Verify your email with a one-time code to create an account.')
 
 @router.post("/login", response_model=Token)
 async def login(user: UserLogin, db: Session = Depends(get_db)):
-    db_user = db.query(User).filter(User.username == user.username).first()
-    if not db_user or not verify_password(user.password, db_user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password"
-        )
-
-    session_id = create_session(user.username)
-    return Token(access_token=session_id)
-
+    raise HTTPException(status_code=403, detail='Use email verification to sign in.')
 
 @router.post("/logout")
-async def logout(credentials: HTTPAuthorizationCredentials = Depends(security)):
+def logout(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
+    revoke_owner_session(credentials.credentials, db)
     token = credentials.credentials
     if token in active_sessions:
         del active_sessions[token]

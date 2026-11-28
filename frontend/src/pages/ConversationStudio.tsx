@@ -1,7 +1,11 @@
-import { accountStorage } from '../lib/account'
+import { emptyRecognitionGate, advanceRecognitionGate } from '../lib/recognition-gate'
+import LocalizedNavLabel from '../components/LocalizedNavLabel'
+import { appendConversation, conversationStorageKey, type ConversationMessage } from '../lib/conversation'
+import CameraReadiness from '../components/CameraReadiness'
+import { accountStorage, getAccount } from '../lib/account'
 import { translateAutomatically } from '../lib/auto-translate'
 import VoiceDesk from '../components/VoiceDesk'
-import { OUTPUT_LANGUAGES, translatePhrase } from '../lib/languages'
+import { OUTPUT_LANGUAGES } from '../lib/languages'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
@@ -22,7 +26,6 @@ import {
   Video,
   Volume2,
   X,
-  Sparkles,
 } from 'lucide-react'
 import { useCamera } from '../hooks/useCamera'
 import { useMediaPipe } from '../hooks/useMediaPipe'
@@ -42,13 +45,7 @@ import {
   type SignExample,
 } from '../lib/personalized-signs'
 
-interface Message {
-  id: string
-  role: 'signer' | 'partner'
-  content: string
-  at: string
-  corrected?: boolean
-}
+type Message = ConversationMessage
 interface SpeechResult extends ArrayLike<{ transcript: string }> {
   isFinal: boolean
 }
@@ -72,11 +69,11 @@ interface SpeechWindow extends Window {
 }
 const timeNow = () =>
   new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-const CHAT_KEY = 'signbridge-active-conversation'
+const chatKey = () => conversationStorageKey(getAccount()?.username || 'signed-out')
 
 function loadActiveConversation(): Message[] {
   try {
-    const saved: unknown = JSON.parse(sessionStorage.getItem(CHAT_KEY) || '[]')
+    const saved: unknown = JSON.parse(sessionStorage.getItem(chatKey()) || '[]')
     return Array.isArray(saved)
       ? saved
           .filter(
@@ -121,6 +118,7 @@ export default function ConversationStudio() {
   const [personalFrameCount, setPersonalFrameCount] = useState(0)
   const [personalVideoUrl, setPersonalVideoUrl] = useState('')
   const [personalNotice, setPersonalNotice] = useState('')
+  const [videoSize, setVideoSize] = useState({width:1280,height:720})
   const [messages, setMessages] = useState<Message[]>(loadActiveConversation)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingText, setEditingText] = useState('')
@@ -139,7 +137,7 @@ export default function ConversationStudio() {
   const [conversationNotice, setConversationNotice] = useState('')
   const [online, setOnline] = useState(() => navigator.onLine)
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
-  const recentRef = useRef<Array<{ label: string; confidence: number; margin?: number } | null>>([])
+  const recognitionGateRef = useRef(emptyRecognitionGate())
   const lastSpokenRef = useRef<string | null>(null)
   const signDraftRef = useRef('')
   const signMessageTimerRef = useRef<number | null>(null)
@@ -220,8 +218,8 @@ export default function ConversationStudio() {
 
   useEffect(() => {
     try {
-      if (messages.length) sessionStorage.setItem(CHAT_KEY, JSON.stringify(messages.slice(-200)))
-      else sessionStorage.removeItem(CHAT_KEY)
+      if (messages.length) sessionStorage.setItem(chatKey(), JSON.stringify(messages.slice(-200)))
+      else sessionStorage.removeItem(chatKey())
     } catch {
       // Keep session
     }
@@ -289,20 +287,18 @@ export default function ConversationStudio() {
   )
 
   useEffect(() => {
-    if (!isActive) {
-      recentRef.current = []
+    if (!isActive || personalCaptureStage !== 'idle') {
+      recognitionGateRef.current = emptyRecognitionGate()
       lastSpokenRef.current = null
+      if (signMessageTimerRef.current !== null) window.clearTimeout(signMessageTimerRef.current)
       return
     }
-    recentRef.current = [...recentRef.current, framePrediction].slice(-5)
-    if (!framePrediction) {
-      if (!detector.hands || recentRef.current.slice(-4).every(item => item === null))
-        lastSpokenRef.current = null
-      return
-    }
-    const matches = recentRef.current.slice(-2).filter(item => item?.label === framePrediction?.label)
-    if (matches.length < 2 || lastSpokenRef.current === framePrediction.label) return
-    lastSpokenRef.current = framePrediction.label
+    // Explicit clear/replay actions may reset the last accepted word.
+    if (lastSpokenRef.current === null) recognitionGateRef.current.lastAccepted = null
+    const gated = advanceRecognitionGate(recognitionGateRef.current, framePrediction?.label || null, performance.now())
+    recognitionGateRef.current = gated.state
+    if (!gated.accepted || !framePrediction) return
+    lastSpokenRef.current = gated.accepted
     pendingAutoMessageRef.current = true
     setSignDraft(current => (current ? `${current} ${framePrediction.label}` : framePrediction.label))
     setLiveCaption('')
@@ -317,10 +313,7 @@ export default function ConversationStudio() {
       const text = signDraftRef.current.trim()
       if (!text) return
       pendingAutoMessageRef.current = false
-      setMessages(current => [
-        ...current,
-        { id: `${Date.now()}-${Math.random()}`, role: 'signer', content: text, at: timeNow() },
-      ])
+      setMessages(current => appendConversation(current, { id: `${Date.now()}-${Math.random()}`, role: 'signer', content: text, at: timeNow() }))
       setSignDraft('')
       if (voiceMode === 'phrase' && accountStorage.getItem('signbridge-auto-speak') !== 'false') {
         speakText(
@@ -331,15 +324,12 @@ export default function ConversationStudio() {
         )
       }
     }, 900)
-  }, [detector.hands, framePrediction, isActive, voiceMode, speechEnabled])
+  }, [detector.hands, framePrediction, isActive, voiceMode, speechEnabled, personalCaptureStage])
 
   const addMessage = (content: string, role: Message['role']) => {
     const text = content.trim()
     if (!text) return
-    setMessages(current => [
-      ...current,
-      { id: `${Date.now()}-${Math.random()}`, role, content: text, at: timeNow() },
-    ])
+    setMessages(current => appendConversation(current, { id: `${Date.now()}-${Math.random()}`, role, content: text, at: timeNow() }))
     setDraft('')
     setLiveCaption('')
   }
@@ -599,28 +589,7 @@ export default function ConversationStudio() {
 
   return (
     <div className="prism-page conversation-workspace container max-w-7xl py-6 pb-10 sm:py-10">
-      {/* Hero Header */}
-      <div className="mb-6 flex flex-col gap-3 animate-page-enter prism-page-heading signbridge-hero sm:mb-8">
-        <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3.5 py-1.5 text-xs font-semibold text-primary mb-1">
-          <Sparkles className="h-3.5 w-3.5" />
-          <span>Real-Time Camera Translation & Speech Studio</span>
-        </div>
-        <h1 className="font-display text-3xl font-bold tracking-tight sm:text-4xl">
-          Talk, Sign, Understand.
-        </h1>
-        <p className="max-w-3xl text-sm text-muted-foreground sm:text-base">
-          A shared space for camera-based sign recognition, speech captions, and spoken replies.
-          Recognizes published owner vocabulary and your saved family signs.
-        </p>
-      </div>
-
-      <div className="mb-6 flex flex-wrap items-center gap-4 rounded-2xl border border-border bg-card p-4 shadow-sm">
-        <div className="mr-auto"><strong className="block text-sm">Your conversation, your pace</strong><span className="text-xs text-muted-foreground">Immediate voice speaks each accepted sign. Phrase voice waits for a pause.</span></div>
-        <button type="button" aria-pressed={darkTheme} className="rounded-xl border border-border px-3 py-2 text-sm font-medium" onClick={() => { const next = !darkTheme; setDarkTheme(next); document.documentElement.classList.toggle('dark', next); accountStorage.setItem('signbridge-theme', next ? 'dark' : 'light') }}>{darkTheme ? 'Switch to daylight' : 'Switch to night'}</button>
-        <label className="text-sm font-medium">Speak in <select aria-label="Spoken output language" className="ml-2 rounded-xl border border-border bg-background px-3 py-2" value={outputLanguage} onChange={event => { setOutputLanguage(event.target.value); accountStorage.setItem('signbridge-output-language', event.target.value); window.dispatchEvent(new Event('signbridge-language')); stopSpeech() }}>{OUTPUT_LANGUAGES.map(item => <option key={item.code} value={item.code}>{item.name}</option>)}</select></label>
-        <label className="text-sm font-medium">Voice timing <select aria-label="Voice timing" className="ml-2 rounded-xl border border-border bg-background px-3 py-2" value={voiceMode} onChange={event => { setVoiceMode(event.target.value); accountStorage.setItem('signbridge-voice-mode', event.target.value) }}><option value="instant">Immediate</option><option value="phrase">Complete phrase</option></select></label>
-        <span role="status" className="rounded-full bg-emerald-500/10 px-3 py-2 text-xs font-medium text-success">{isActive ? detector.ready ? detector.hands ? 'Hands tracked' : 'Show your hands' : 'Preparing tracker' : 'Camera paused'}</span>
-      </div>
+      <header className="mb-4 flex flex-wrap items-center justify-between gap-3"><h1 className="font-display text-2xl font-bold"><LocalizedNavLabel label="Live Studio"/></h1>        <label className="text-sm font-medium"><LocalizedNavLabel label="Speak in"/> <select aria-label="Spoken output language" className="ml-2 rounded-xl border border-border bg-background px-3 py-2" value={outputLanguage} onChange={event => { setOutputLanguage(event.target.value); accountStorage.setItem('signbridge-output-language', event.target.value); window.dispatchEvent(new Event('signbridge-language')); stopSpeech() }}>{OUTPUT_LANGUAGES.map(item => <option key={item.code} value={item.code}>{item.name}</option>)}</select></label></header>
       {!online && (
         <div
           role="status"
@@ -631,19 +600,13 @@ export default function ConversationStudio() {
         </div>
       )}
 
-      {isActive && detector.ready && <p className="mb-3 text-sm text-muted-foreground">Hand tracking: {Math.round(detector.inferenceMs)} ms per processed frame. This measures tracker processing, not total recognition or speech delay.</p>}
-      <div className="mb-4 rounded-xl border border-border bg-card px-4 py-3"><label className="flex items-center gap-3 text-sm font-semibold"><input type="checkbox" checked={autoTranslate} onChange={event => { setAutoTranslate(event.target.checked); accountStorage.setItem('signbridge-auto-translate', String(event.target.checked)); stopSpeech() }} />Automatic translation to {OUTPUT_LANGUAGES.find(item => item.code === outputLanguage)?.name}</label><p className="mt-2 text-sm text-muted-foreground">Built-in phrases stay on this device. Other recognized words are sent to MyMemory when this is on, then cached for this session. Machine translations may need correction.</p></div>
-      {translatedMessage?.language === outputLanguage && <div aria-live="polite" className="mb-5 rounded-2xl bg-primary/10 p-5"><p className="text-sm font-semibold text-primary">Translated message</p><p className="mt-2 text-3xl font-bold">{translatedMessage.text}</p></div>}
-      <VoiceDesk />
-      <CommunicationToolkit vocabulary={sharedModel?.labels || []} liveText={signDraft || messages.at(-1)?.content || ''} />
-      {framePrediction && <div aria-live="polite" className="mb-5 rounded-2xl border border-primary/30 bg-primary/10 p-5"><span className="text-sm text-muted-foreground">{framePrediction.label}</span><p className="mt-1 font-display text-3xl font-bold">{translatePhrase(framePrediction.label, outputLanguage).text}</p></div>}
       {/* Main Studio Grid */}
       <div className="grid gap-6 lg:grid-cols-[1fr_0.9fr]">
         {/* Left Column: Camera + Sign Recognition Panel */}
         <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-xl flex flex-col">
           <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4 bg-muted/20">
             <div>
-              <h2 className="font-display text-lg font-bold">Sign to Voice Camera</h2>
+              <h2 className="font-display text-lg font-bold"><LocalizedNavLabel label="Sign to Voice Camera"/></h2>
               <p className="text-xs text-muted-foreground">Video stays on this device</p>
             </div>
             <span
@@ -660,14 +623,21 @@ export default function ConversationStudio() {
             </span>
           </div>
 
+          <button type="button" className="action-secondary m-3" onClick={async event => {
+            const camera = event.currentTarget.parentElement?.querySelector('.mobile-camera-stage') as HTMLElement | null
+            if (!camera) return
+            try { if (document.fullscreenElement) await document.exitFullscreen(); else if (camera.requestFullscreen) await camera.requestFullscreen(); else window.alert('Fullscreen is unavailable in this browser. Rotate your phone for a larger preview.') }
+            catch { window.alert('Fullscreen is unavailable in this browser. You can still use the camera preview.') }
+          }}><LocalizedNavLabel label="Expand camera"/></button>
           {/* Video Container with Hand Landmark Overlay */}
-          <div className="relative aspect-video min-h-60 bg-slate-950 sm:min-h-72 overflow-hidden">
+          <div className="mobile-camera-stage relative aspect-video min-h-60 shrink-0 bg-slate-950 sm:min-h-72 overflow-hidden">
             <video
               ref={videoRef}
+              onLoadedMetadata={event => setVideoSize({width:event.currentTarget.videoWidth,height:event.currentTarget.videoHeight})}
               playsInline
               muted
               autoPlay
-              className={`absolute inset-0 h-full w-full object-cover transform -scale-x-100 ${
+              className={`absolute inset-0 h-full w-full object-contain transform ${facingMode === 'user' ? '-scale-x-100' : ''} ${
                 isActive ? '' : 'hidden'
               }`}
             />
@@ -675,11 +645,14 @@ export default function ConversationStudio() {
             {/* Glowing Hand Skeleton & Holographic Overlay */}
             {isActive && (
               <HandOverlay
+                showLabel={false}
                 hands={detector.rawHands}
                 prediction={detector.geometricPrediction}
                 activeSign={framePrediction?.label}
                 confidence={framePrediction?.confidence}
                 mirrored={facingMode === 'user'}
+                sourceWidth={videoSize.width}
+                sourceHeight={videoSize.height}
               />
             )}
 
@@ -689,7 +662,7 @@ export default function ConversationStudio() {
                 <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/20 text-primary mb-3">
                   <Camera className="h-8 w-8 text-primary" />
                 </div>
-                <h3 className="font-display text-lg font-bold">Camera is Off</h3>
+                <h3 className="font-display text-lg font-bold"><LocalizedNavLabel label="Camera is Off"/></h3>
                 <p className="text-xs text-white/70 max-w-xs mt-1">
                   Start the camera to check for signs in the trained vocabulary. Recognition is experimental and runs on this device.
                 </p>
@@ -757,6 +730,7 @@ export default function ConversationStudio() {
             )}
           </div>
 
+          <CameraReadiness video={videoRef} active={isActive} hands={detector.hands} />
           {/* Quick Toolbar */}
           <div className="flex flex-wrap gap-2 p-4 sm:p-5 border-b border-border bg-card">
             <button
@@ -765,7 +739,7 @@ export default function ConversationStudio() {
               className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition shadow-sm"
             >
               {isActive ? <CameraOff className="h-4 w-4" /> : <Camera className="h-4 w-4" />}
-              {isActive ? 'Turn camera off' : 'Start signing'}
+              <LocalizedNavLabel label={isActive ? 'Turn camera off' : 'Start signing'}/>
             </button>
             <button
               type="button"
@@ -790,6 +764,7 @@ export default function ConversationStudio() {
             </button>
           </div>
 
+          <details className="border-b border-border"><summary className="cursor-pointer px-5 py-3 text-sm font-semibold">Quick words & model details</summary>
           {/* Quick Sign Taps */}
           <div className="px-5 py-4 border-b border-border bg-muted/10">
             <div className="flex items-center justify-between mb-2">
@@ -815,6 +790,7 @@ export default function ConversationStudio() {
             </div>
           </div>
 
+          </details>
           {/* Sign Message Composer */}
           <div className="p-5 flex-1 flex flex-col justify-between">
             <div>
@@ -863,7 +839,7 @@ export default function ConversationStudio() {
                 disabled={!signDraft}
                 className="rounded-xl border border-border px-4 py-3 text-sm font-semibold hover:bg-muted disabled:opacity-40 transition"
               >
-                Clear
+                <LocalizedNavLabel label="Clear"/>
               </button>
             </div>
           </div>
@@ -873,7 +849,7 @@ export default function ConversationStudio() {
         <section className="flex min-h-[520px] flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-xl sm:min-h-[620px]">
           <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4 bg-muted/20">
             <div>
-              <h2 className="font-display text-lg font-bold">Conversation Captions</h2>
+              <h2 className="font-display text-lg font-bold"><LocalizedNavLabel label="Conversation Captions"/></h2>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 Signed messages & spoken captions in one live thread
               </p>
@@ -1141,6 +1117,16 @@ export default function ConversationStudio() {
         </section>
       </div>
 
+      <details className="mt-6 rounded-2xl border border-border bg-card p-4"><summary className="cursor-pointer font-semibold">Voice, translation & tools</summary><div className="mt-4 space-y-4">        <button type="button" aria-pressed={darkTheme} className="rounded-xl border border-border px-3 py-2 text-sm font-medium" onClick={() => { const next = !darkTheme; setDarkTheme(next); document.documentElement.classList.toggle('dark', next); accountStorage.setItem('signbridge-theme', next ? 'dark' : 'light') }}>{darkTheme ? 'Switch to daylight' : 'Switch to night'}</button>
+
+        <label className="text-sm font-medium">Voice timing <select aria-label="Voice timing" className="ml-2 rounded-xl border border-border bg-background px-3 py-2" value={voiceMode} onChange={event => { setVoiceMode(event.target.value); accountStorage.setItem('signbridge-voice-mode', event.target.value) }}><option value="instant">Immediate</option><option value="phrase">Complete phrase</option></select></label>
+        <span role="status" className="rounded-full bg-emerald-500/10 px-3 py-2 text-xs font-medium text-success">{isActive ? detector.ready ? detector.hands ? 'Hands tracked' : 'Show your hands' : 'Preparing tracker' : 'Camera paused'}</span>
+      {isActive && detector.ready && <p className="mb-3 text-sm text-muted-foreground">Hand tracking: {Math.round(detector.inferenceMs)} ms per processed frame. This measures tracker processing, not total recognition or speech delay.</p>}
+      <div className="mb-4 rounded-xl border border-border bg-card px-4 py-3"><label className="flex items-center gap-3 text-sm font-semibold"><input type="checkbox" checked={autoTranslate} onChange={event => { setAutoTranslate(event.target.checked); accountStorage.setItem('signbridge-auto-translate', String(event.target.checked)); stopSpeech() }} />Automatic translation to {OUTPUT_LANGUAGES.find(item => item.code === outputLanguage)?.name}</label><p className="mt-2 text-sm text-muted-foreground">Built-in phrases stay on this device. Other recognized words are sent to MyMemory when this is on, then cached for this session. Machine translations may need correction.</p></div>
+      {translatedMessage?.language === outputLanguage && <div aria-live="polite" className="mb-5 rounded-2xl bg-primary/10 p-5"><p className="text-sm font-semibold text-primary">Translated message</p><p className="mt-2 text-3xl font-bold">{translatedMessage.text}</p></div>}
+      <VoiceDesk />
+      <CommunicationToolkit vocabulary={sharedModel?.labels || []} liveText={signDraft || messages.at(-1)?.content || ''} />
+</div></details>
       {/* Private Family Signs Accordion */}
       <details
         id="private-family-signs"

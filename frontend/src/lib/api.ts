@@ -68,14 +68,15 @@ function resampleSequence(sequence: number[][], count: number): number[][] {
 
 export function predictSharedSequence(model: SharedModel | null, frames: number[][]): SharedSignPrediction | null {
   if (!model?.published || !model.templates || frames.length < 6 || frames.some(frame => frame.length !== FEATURE_COUNT || frame.some(value => !Number.isFinite(value)))) return null
+  if (frames.every(frame => frame.every(value => value === 0))) return null
   const current = resampleSequence(frames.slice(-40), SEQUENCE_LENGTH)
   const recent = resampleSequence(frames.slice(-6), SEQUENCE_LENGTH)
   const ranked = Object.entries(model.templates).map(([label, template]) => {
     // Read v1 models that used a single averaged template, and the current multi-clip kNN format.
-    const samples = Array.isArray(template[0]?.[0])
+    const samples = Array.isArray(template?.[0]?.[0])
       ? template
       : [template as unknown as number[][]]
-    const valid = samples.filter(sample => sample.length === SEQUENCE_LENGTH && sample.every(frame => frame.length === FEATURE_COUNT))
+    const valid = samples.filter(sample => Array.isArray(sample) && sample.length === SEQUENCE_LENGTH && sample.every(frame => Array.isArray(frame) && frame.length === FEATURE_COUNT && frame.every(Number.isFinite)))
     if (!valid.length) return null
     const distances = valid.map(sample => {
       // Stable poses can use recent frames; moving signs retain the full sequence.
@@ -91,21 +92,21 @@ export function predictSharedSequence(model: SharedModel | null, frames: number[
   const best = ranked[0]
   if (!best || best.distance > 0.2) return null
   const second = ranked[1]
-  const margin = second ? Math.max(0, 1 - best.distance / Math.max(second.distance, 1e-6)) : 1
+  const margin = second ? Math.max(0, (second.distance - best.distance) / Math.max(second.distance, 1e-6)) : 1
   if (second && margin < 0.16) return null
   return { label: best.label, confidence: Math.max(0, 1 - best.distance / 0.2), margin }
 }
 
 export function predictSharedSign(model: SharedModel | null, features: number[]): SharedSignPrediction | null {
   if (!model?.published || !model.centroids || features.length !== 126 || features.every(value => value === 0) || features.some(value => !Number.isFinite(value))) return null
-  const ranked = Object.entries(model.centroids).map(([label, center]) => ({
+  const ranked = Object.entries(model.centroids).filter(([, center]) => Array.isArray(center) && center.length === FEATURE_COUNT && center.every(Number.isFinite)).map(([label, center]) => ({
     label,
     distance: Math.sqrt(features.reduce((sum, value, index) => sum + (value - center[index]) ** 2, 0) / features.length),
   })).filter(item => Number.isFinite(item.distance)).sort((a, b) => a.distance - b.distance)
   const best = ranked[0]
   if (!best || best.distance > 0.2) return null
   const second = ranked[1]
-  const margin = second ? Math.max(0, 1 - best.distance / Math.max(second.distance, 1e-6)) : 1
+  const margin = second ? Math.max(0, (second.distance - best.distance) / Math.max(second.distance, 1e-6)) : 1
   if (second && margin < 0.12) return null
   return { label: best.label, confidence: Math.max(0, 1 - best.distance / 0.2), margin }
 }
@@ -133,13 +134,14 @@ export const ownerApi = {
   evaluate: (token: string) => ownerRequest<{ validation_metrics: { validation_examples: number; accuracy: number; coverage: number; confusion: Record<string, Record<string, number>> } }>('/api/v1/owner/publish?dry_run=true', token, { method: 'POST' }),
   login: (username: string, password: string) => ownerRequest<{ access_token: string }>('/api/v1/auth/admin/login', undefined, { method: 'POST', body: JSON.stringify({ username, password }) }),
   examples: (token: string) => ownerRequest<OwnerExample[]>('/api/v1/owner/examples', token),
-  addExample: (token: string, label: string, frames: number[][], video: Blob, dataset_split: 'train' | 'validation', participant_code: string) => {
+  addExample: (token: string, label: string, frames: number[][], video: Blob, dataset_split: 'train' | 'validation', participant_code: string, upload_id?: string) => {
     const body = new FormData()
     body.set('label', label)
     body.set('frames_json', JSON.stringify(frames))
     body.set('consented', 'true')
     body.set('dataset_split', dataset_split)
     body.set('participant_code', participant_code)
+    if (upload_id) body.set('upload_id', upload_id)
     body.set('video', video, video.type.includes('mp4') ? 'sample.mp4' : 'sample.webm')
     return ownerRequest<OwnerExample>('/api/v1/owner/examples', token, { method: 'POST', body })
   },

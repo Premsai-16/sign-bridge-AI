@@ -1,4 +1,5 @@
-import { getAccount, signOut, saveStatus, flushAccountSaves } from '../lib/account'
+import LocalizedNavLabel from './LocalizedNavLabel'
+import { accountStorage, signOut, saveStatus, flushAccountSaves } from '../lib/account'
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import { useState, useCallback, useEffect } from 'react'
 import BridgeMark from './BridgeMark'
@@ -21,9 +22,11 @@ const navItems = [
 export default function Layout() {
   const [syncStatus, setSyncStatus] = useState(saveStatus)
   useEffect(() => { const update = () => setSyncStatus(saveStatus); window.addEventListener('account-save-status',update); return () => window.removeEventListener('account-save-status',update) }, [])
-  const [mobileOpen, setMobileOpen] = useState(false)
+  const [mobileMenuPath, setMobileMenuPath] = useState<string | null>(null)
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null)
   const location = useLocation()
+  const mobileOpen = mobileMenuPath === location.pathname
+  const setMobileOpen = (open: boolean) => setMobileMenuPath(open ? location.pathname : null)
 
   useEffect(() => {
     const offerInstall = (event: Event) => {
@@ -40,12 +43,11 @@ export default function Layout() {
   }, [])
 
   useEffect(() => {
-    setMobileOpen(false)
     window.scrollTo({ top: 0, behavior: 'instant' })
   }, [location.pathname])
 
   useEffect(() => {
-    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setMobileOpen(false) }
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setMobileMenuPath(null) }
     window.addEventListener('keydown', close)
     return () => window.removeEventListener('keydown', close)
   }, [])
@@ -101,7 +103,7 @@ export default function Layout() {
           <nav aria-label="Main navigation" className="hidden xl:flex items-center gap-1">
             {navItems.map(item => (
               <Link key={item.path} to={item.path} aria-current={location.pathname === item.path ? 'page' : undefined} className={getNavClass(item.path)}>
-                {item.label}
+                <LocalizedNavLabel label={item.label}/>
               </Link>
             ))}
           </nav>
@@ -142,7 +144,7 @@ export default function Layout() {
                 onClick={() => setMobileOpen(false)}
                 className={getMobileNavClass(item.path)}
               >
-                <span>{item.label}</span>
+                <span><LocalizedNavLabel label={item.label}/></span>
                 {location.pathname === item.path && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
               </Link>
             ))}
@@ -150,7 +152,7 @@ export default function Layout() {
         )}
       </header>
 
-      <div className="account-strip"><span>{getAccount()?.username} · <span role="status">{syncStatus}</span></span><div><button onClick={() => void flushAccountSaves()}>Save now</button><button onClick={() => void signOut().catch(error => setSyncStatus(error.message))}>Sign out</button></div></div>
+      <div className="account-strip"><span>{accountStorage.getItem('signbridge-name') || 'Your account'} · <span role="status">{syncStatus}</span></span><div><Link to="/profile"><LocalizedNavLabel label="My preferences"/></Link><button onClick={() => void flushAccountSaves()}><LocalizedNavLabel label="Save now"/></button><button onClick={() => void signOut().catch(error => setSyncStatus(error.message))}><LocalizedNavLabel label="Sign out"/></button></div></div>
       {/* Page Content */}
       <main id="main-content" tabIndex={-1} className={`flex-1 app-canvas route-${location.pathname.split('/')[1] || 'home'}`}>
         <Outlet />
